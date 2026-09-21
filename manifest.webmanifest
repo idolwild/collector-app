@@ -1,0 +1,19 @@
+{
+  "name": "Collector",
+  "short_name": "Collector",
+  "description": "Art collection image database. Capture, categorize, and search your inventory.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#08080a",
+  "theme_color": "#08080a",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
