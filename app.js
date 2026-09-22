@@ -150,7 +150,7 @@
 
   const root = document.getElementById('root');
 
-  const APP_VERSION = 'v31';
+  const APP_VERSION = 'v34';
 
   function imgs(a) {
     const list = Array.isArray(a.images) && a.images.length ? a.images : [a.image];
@@ -187,6 +187,12 @@
     return Array.isArray(a.posters) ? a.posters : [];
   }
 
+  // True when slot i has a real poster image (not just the playable file).
+  function hasPoster(a, i) {
+    const p = postersOf(a)[i || 0];
+    return !!(p instanceof Blob && p.size);
+  }
+
   function durationsOf(a) {
     return Array.isArray(a.durations) ? a.durations : [];
   }
@@ -202,6 +208,9 @@
   }
 
   // Duration + a JPEG poster frame (~10% in, avoids black first frames).
+  // A bad thumbnail must never block a good video (some phones refuse to
+  // paint HDR frames to canvas) — poster may come back null, and the video
+  // is still accepted as long as its duration is known.
   function probeVideo(blob) {
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(blob);
@@ -209,34 +218,69 @@
       v.muted = true;
       v.playsInline = true;
       v.preload = 'auto';
+      // iOS Safari decodes camera footage far more reliably for attached elements.
+      v.style.cssText = 'position:fixed;left:0;top:0;width:4px;height:4px;opacity:0;pointer-events:none;';
+      document.body.appendChild(v);
       let settled = false;
-      const done = (fn) => {
-        if (settled) return;
-        settled = true;
+      const cleanup = () => {
         clearTimeout(timer);
         URL.revokeObjectURL(url);
         v.removeAttribute('src');
         try { v.load(); } catch {}
+        v.remove();
+      };
+      const done = (fn) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         fn();
       };
-      const timer = setTimeout(() => done(() => reject(new Error('Could not read that video.'))), 15000);
+      const timer = setTimeout(() => done(() => reject(new Error('Could not read that video.'))), 25000);
       const fail = () => done(() => reject(new Error('Could not read that video.')));
       v.onerror = fail;
-      const beginSeek = (dur) => {
+      // Paint one frame to a JPEG; null when the phone won't give us pixels.
+      const grabFrame = () => new Promise((res) => {
+        const finish = (p) => res(p && p.size ? p : null);
+        try {
+          const w = v.videoWidth || 0, h = v.videoHeight || 0;
+          if (!w || !h) return finish(null);
+          const s = Math.min(1, 1280 / Math.max(w, h));
+          const c = document.createElement('canvas');
+          c.width = Math.max(2, Math.round(w * s));
+          c.height = Math.max(2, Math.round(h * s));
+          c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+          let answered = false;
+          const to = setTimeout(() => { if (!answered) { answered = true; finish(null); } }, 4000);
+          c.toBlob((p) => { if (!answered) { answered = true; clearTimeout(to); finish(p); } }, 'image/jpeg', 0.9);
+        } catch { finish(null); }
+      });
+      const beginSeek = async (dur) => {
         if (!Number.isFinite(dur) || dur <= 0) { fail(); return; }
+        // Camera files need a moment before frames are seekable.
+        const t0 = Date.now();
+        while (v.readyState < 2 && Date.now() - t0 < 10000) {
+          await new Promise((r) => setTimeout(r, 200));
+          if (settled) return;
+        }
+        if (v.readyState < 2) { fail(); return; }
         const at = Math.min(Math.max(dur * 0.1, 0.1), Math.max(dur - 0.1, 0.1));
-        v.onseeked = () => {
-          try {
-            const w = v.videoWidth || 640, h = v.videoHeight || 360;
-            const s = Math.min(1, 640 / Math.max(w, h));
-            const c = document.createElement('canvas');
-            c.width = Math.max(2, Math.round(w * s));
-            c.height = Math.max(2, Math.round(h * s));
-            c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
-            c.toBlob((p) => done(() => (p ? resolve({ duration: dur, poster: p }) : reject(new Error('Could not read that video.')))), 'image/jpeg', 0.82);
-          } catch (e) { done(() => reject(e)); }
+        let tries = 0;
+        v.onseeked = async () => {
+          const poster = await grabFrame();
+          if (settled) return;
+          done(() => resolve({ duration: dur, poster }));
         };
-        try { v.currentTime = at; } catch { fail(); }
+        const trySeek = () => {
+          if (settled) return;
+          tries++;
+          try {
+            v.currentTime = at;
+          } catch {
+            if (tries < 3) setTimeout(trySeek, 1000);
+            else fail();
+          }
+        };
+        trySeek();
       };
       v.onloadedmetadata = () => {
         if (v.duration === Infinity) {
@@ -1491,8 +1535,9 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
       while (posters.length < media.length) posters.push(null);
       while (durations.length < media.length) durations.push(null);
       let dirty = posters.length !== postersOf(a).length || durations.length !== durationsOf(a).length;
+      const upgrade = a.posterQ !== 2; // regenerate old low-res posters once
       for (let i = 0; i < media.length; i++) {
-        if (!isVideo(media[i]) || (posters[i] && durations[i] != null)) continue;
+        if (!isVideo(media[i]) || (posters[i] && durations[i] != null && !upgrade)) continue;
         try {
           const p = await probeVideo(media[i]);
           posters[i] = p.poster;
@@ -1503,7 +1548,8 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
       if (dirty) {
         a.posters = posters;
         a.durations = durations;
-        try { await CollectorDB.updateArt(a.id, { posters, durations }); } catch {}
+        a.posterQ = 2;
+        try { await CollectorDB.updateArt(a.id, { posters, durations, posterQ: 2 }); } catch {}
       }
     }
   }
@@ -1612,9 +1658,11 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     const t = cardTitle(a);
     const first = imgs(a)[0];
     const coverUrl = thumbForId(a.id, 0);
-    const thumb = coverUrl
-      ? `<img src="${esc(coverUrl)}" alt="${esc(a.title || 'artwork')}" loading="lazy" />`
-      : '<div class="no-img"></div>';
+    const thumb = !coverUrl
+      ? '<div class="no-img"></div>'
+      : isVideo(first) && !hasPoster(a, 0)
+        ? '<div class="no-img vid-fallback"><span>▶</span></div>'
+        : `<img src="${esc(coverUrl)}" alt="${esc(a.title || 'artwork')}" loading="lazy" />`;
     const playBadge = isVideo(first)
       ? `<span class="play-badge">▶${durationsOf(a)[0] ? ` ${esc(fmtDur(durationsOf(a)[0]))}` : ''}</span>`
       : '';
@@ -1695,10 +1743,13 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     const name = typeof s.name === 'string' ? s.name : '';
     const members = state.artworks.filter((a) => a.setId === s.id);
     const m0 = members[0];
+    const m0First = m0 ? imgs(m0)[0] : null;
     const cover = m0 ? thumbForId(m0.id, 0) : null;
-    const thumb = cover
-      ? `<img src="${esc(cover)}" alt="" loading="lazy" />${m0 && isVideo(imgs(m0)[0]) ? '<span class="play-badge">▶</span>' : ''}`
-      : `<div class="set-mono" aria-hidden="true">${esc(name[0] || '')}</div>`;
+    const thumb = !cover
+      ? `<div class="set-mono" aria-hidden="true">${esc(name[0] || '')}</div>`
+      : m0First && isVideo(m0First) && !hasPoster(m0, 0)
+        ? `<div class="no-img vid-fallback"><span>▶</span></div><span class="play-badge">▶</span>`
+        : `<img src="${esc(cover)}" alt="" loading="lazy" />${m0First && isVideo(m0First) ? '<span class="play-badge">▶</span>' : ''}`;
     const selCheck = state.selecting
       ? `<span class="sel-check${state.selected.has('s:' + s.id) ? ' on' : ''}" data-key="s:${s.id}">✓</span>`
       : '';
@@ -2314,6 +2365,164 @@ const paletteRow = form.palette.length
       </div>`;
   }
 
+  /* ---------------- in-app video recorder ----------------
+     Records straight from the camera (1080p, high bitrate) instead of going
+     through the file picker, where iOS recompresses clips to low resolution.
+     Needs https + camera permission; otherwise falls back to the OS camera. */
+
+  function openRecorder() {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      document.getElementById('record-input')?.click();
+      return;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'name-overlay';
+    overlay.innerHTML = `
+      <div class="name-card rec-card" role="dialog" aria-modal="true" aria-label="Record video">
+        <div class="rec-top">
+          <span class="rec-timer" id="rec-timer">0:00 / ${esc(fmtDur(MAX_VIDEO_SEC))}</span>
+          <button type="button" class="viewer-close" id="rec-close" aria-label="Close">✕</button>
+        </div>
+        <div class="rec-stage">
+          <video id="rec-live" muted playsinline autoplay></video>
+          <video id="rec-review" controls playsinline hidden></video>
+          <div class="rec-progress"><span id="rec-bar"></span></div>
+        </div>
+        <p class="dialog-msg" id="rec-status">Starting camera…</p>
+        <div class="name-actions rec-actions">
+          <button class="ghost" id="rec-cancel">Cancel</button>
+          <button class="danger" id="rec-go" disabled>● Record</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const live = overlay.querySelector('#rec-live');
+    const review = overlay.querySelector('#rec-review');
+    const timerEl = overlay.querySelector('#rec-timer');
+    const bar = overlay.querySelector('#rec-bar');
+    const status = overlay.querySelector('#rec-status');
+    const go = overlay.querySelector('#rec-go');
+    const cancelBtn = overlay.querySelector('#rec-cancel');
+    let stream = null, rec = null, chunks = [], tick = null, startT = 0, blobUrl = null, mime = '';
+    let mode = 'starting'; // starting | live | recording | review
+
+    const showTime = (sec) => { timerEl.textContent = `${fmtDur(sec)} / ${fmtDur(MAX_VIDEO_SEC)}`; };
+    const showProgress = (sec) => { bar.style.width = `${Math.min(100, (sec / MAX_VIDEO_SEC) * 100)}%`; };
+    const cleanup = () => {
+      clearInterval(tick);
+      if (rec && rec.state !== 'inactive') { try { rec.stop(); } catch {} }
+      for (const t of (stream && stream.getTracks()) || []) { try { t.stop(); } catch {} }
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      overlay.remove();
+    };
+    const setActions = (html) => {
+      const box = overlay.querySelector('.rec-actions');
+      box.innerHTML = html;
+      box.querySelector('#rec-cancel')?.addEventListener('click', cleanup);
+      box.querySelector('#rec-again')?.addEventListener('click', toLive);
+      box.querySelector('#rec-use')?.addEventListener('click', useClip);
+      box.querySelector('#rec-go')?.addEventListener('click', onGo);
+    };
+    const toLive = () => {
+      mode = 'live';
+      if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
+      review.removeAttribute('src');
+      review.hidden = true;
+      live.hidden = false;
+      showTime(0); showProgress(0);
+      status.textContent = 'HD recording, up to 30 seconds. Tap Record.';
+      setActions(`<button class="ghost" id="rec-cancel">Cancel</button>
+        <button class="danger" id="rec-go">● Record</button>`);
+    };
+    const stopRec = () => {
+      clearInterval(tick);
+      if (rec && rec.state !== 'inactive') { try { rec.stop(); } catch {} }
+    };
+    const onStopped = () => {
+      if (mode !== 'recording') return;
+      const type = mime || 'video/mp4';
+      const blob = new Blob(chunks, { type });
+      const secs = Math.min(MAX_VIDEO_SEC, (Date.now() - startT) / 1000);
+      blobUrl = URL.createObjectURL(blob);
+      review.src = blobUrl;
+      review.hidden = false;
+      live.hidden = true;
+      mode = 'review';
+      showTime(secs); showProgress(secs);
+      status.textContent = 'Looking good? Use it, or record again.';
+      setActions(`<button class="ghost" id="rec-cancel">Cancel</button>
+        <button class="ghost" id="rec-again">Re-record</button>
+        <button class="primary" id="rec-use">Use video</button>`);
+    };
+    const useClip = () => {
+      const type = mime || 'video/mp4';
+      const ext = type.includes('mp4') ? 'mp4' : 'webm';
+      const d = new Date();
+      const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
+      const file = new File([new Blob(chunks, { type })], `recording-${stamp}.${ext}`, { type });
+      cleanup();
+      void handleFiles([file]);
+    };
+    const onGo = () => {
+      if (mode === 'live') {
+        chunks = [];
+        try {
+          rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8000000 } : { videoBitsPerSecond: 8000000 });
+        } catch {
+          try { rec = new MediaRecorder(stream); } catch (e) { status.textContent = 'This browser refused to record.'; return; }
+        }
+        rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.onstop = onStopped;
+        rec.onerror = () => { status.textContent = 'Recording failed — try again.'; toLive(); };
+        try { rec.start(250); } catch { status.textContent = 'Recording failed — try again.'; return; }
+        mode = 'recording';
+        startT = Date.now();
+        status.textContent = 'Recording… tap Stop to finish.';
+        setActions(`<button class="ghost" id="rec-cancel">Cancel</button>
+          <button class="danger" id="rec-go">■ Stop</button>`);
+        tick = setInterval(() => {
+          const secs = (Date.now() - startT) / 1000;
+          showTime(secs); showProgress(secs);
+          if (secs >= MAX_VIDEO_SEC) stopRec(); // onStopped fires next
+        }, 200);
+      } else if (mode === 'recording') {
+        stopRec();
+      }
+    };
+
+    go.addEventListener('click', onGo);
+    cancelBtn.addEventListener('click', cleanup);
+    overlay.querySelector('#rec-close').addEventListener('click', cleanup);
+
+    (async () => {
+      try {
+        const hd = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { ...hd, facingMode: 'environment' }, audio: true });
+        } catch (e) {
+          // No rear camera (laptops, desktops, some browsers) — take any camera.
+          if (e && (e.name === 'OverconstrainedError' || e.name === 'NotFoundError')) {
+            stream = await navigator.mediaDevices.getUserMedia({ video: hd, audio: true });
+          } else {
+            throw e;
+          }
+        }
+      } catch {
+        status.textContent = 'Camera blocked. Allow access and reopen, or use the camera app instead.';
+        setActions(`<button class="ghost" id="rec-cancel">Cancel</button>
+          <button class="ghost" id="rec-go">Open camera app</button>`);
+        overlay.querySelector('#rec-go').addEventListener('click', () => {
+          cleanup();
+          document.getElementById('record-input')?.click();
+        }, { once: true });
+        return;
+      }
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('video/mp4')) mime = 'video/mp4';
+      live.srcObject = stream;
+      try { await live.play(); } catch {}
+      toLive();
+    })();
+  }
+
   async function handleFile(file) {
     await handleFiles([file]);
   }
@@ -2338,7 +2547,7 @@ const paletteRow = form.palette.length
         try {
           probe = await probeVideo(f);
         } catch {
-          rejected.push(`${f.name || 'Video'}: could not be read.`);
+          rejected.push(`${f.name || 'Video'}: could not be read. Try a shorter clip, or lower the camera resolution.`);
           continue;
         }
         if (probe.duration > MAX_VIDEO_SEC + 0.5) {
@@ -2494,7 +2703,7 @@ const paletteRow = form.palette.length
     });
 
     shell.querySelector('#btn-capture')?.addEventListener('click', () => shell.querySelector('#capture-input').click());
-    shell.querySelector('#btn-record')?.addEventListener('click', () => shell.querySelector('#record-input').click());
+    shell.querySelector('#btn-record')?.addEventListener('click', openRecorder);
     shell.querySelector('#btn-pick')?.addEventListener('click', () => shell.querySelector('#pick-input').click());
     shell.querySelector('#btn-scan')?.addEventListener('click', scanLabel);
     shell.querySelector('#capture-input')?.addEventListener('change', (e) => {
@@ -2603,6 +2812,7 @@ const paletteRow = form.palette.length
       image: form.images[0],
       posters: form.posters.slice(),
       durations: form.durations.slice(),
+      posterQ: 2, // poster quality version — backfill upgrades older ones
       setId: state.formSetId || undefined,
       createdAt: isNew ? now : undefined,
       updatedAt: now,
@@ -2858,7 +3068,10 @@ const paletteRow = form.palette.length
           .map(
             (b, i) => {
               const video = isVideo(b);
-              return `<button type="button" class="strip-thumb${i === detail.index ? ' on' : ''}${video ? ' is-video' : ''}" data-i="${i}" aria-label="${video ? 'Video' : 'Photo'} ${i + 1}"><img src="${esc(thumbForId(art.id, i) || '')}" alt="" loading="lazy" />${video ? '<span class="strip-play">▶</span>' : ''}</button>`;
+              const shot = !video || hasPoster(art, i)
+                ? `<img src="${esc(thumbForId(art.id, i) || '')}" alt="" loading="lazy" />`
+                : '<span class="strip-fallback">▶</span>';
+              return `<button type="button" class="strip-thumb${i === detail.index ? ' on' : ''}${video ? ' is-video' : ''}" data-i="${i}" aria-label="${video ? 'Video' : 'Photo'} ${i + 1}">${shot}${video ? '<span class="strip-play">▶</span>' : ''}</button>`;
             }
             )
             .join('')}</div>`
@@ -3123,6 +3336,7 @@ const paletteRow = form.palette.length
     const purged = await purgeShells(rows);
     await repairPalettes(rows);
     rows = await CollectorDB.getAll();
+    await backfillMedia(rows);
     if (purged) {
       state.notice = `Removed ${purged} damaged record${purged === 1 ? '' : 's'} — photos erased by an earlier bug can't be restored. Anything you add from now on is saved safely.`;
     }
