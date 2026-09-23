@@ -1,4 +1,4 @@
-const CACHE = 'collector-shell-v38';
+const CACHE = 'collector-shell-v41';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

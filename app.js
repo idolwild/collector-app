@@ -293,6 +293,8 @@
     murls: [], // playable object URLs for video items, null for photos
     posters: [], // parallel to images: poster blob for videos, null otherwise
     durations: [], // parallel to images: seconds for videos, null otherwise
+    coa: [], // certificate files: [{ blob, name }]
+    coaUrls: [], // preview object URLs for image COAs, null otherwise
     palette: [],
     titleTouched: false,
   };
@@ -303,7 +305,7 @@
 
   const root = document.getElementById('root');
 
-  const APP_VERSION = 'v37';
+  const APP_VERSION = 'v40';
 
   function imgs(a) {
     const list = Array.isArray(a.images) && a.images.length ? a.images : [a.image];
@@ -465,6 +467,28 @@
       .replace(/'/g, '&#39;');
   }
 
+  /* ---------------- brand icons ----------------
+     Contemporary line icons: 24-grid, currentColor, round caps — they pick
+     up the theme text color automatically, dark and light. */
+  const ICONS = {
+    camera: '<circle cx="12" cy="13" r="3.5"/><path d="M4 8h3l2-2.5h6L17 8h3a1.5 1.5 0 0 1 1.5 1.5V19a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 19V9.5A1.5 1.5 0 0 1 4 8z"/>',
+    video: '<rect x="1.5" y="6" width="14" height="12" rx="2.5"/><path d="M15.5 10.5l7-3.5v10l-7-3.5z"/>',
+    image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M4.5 18.5l5-5 3.5 3.5 3-3 3.5 3.5"/>',
+    tag: '<path d="M20.6 13.4L11 3.8A2 2 0 0 0 9.6 3.2H4a1 1 0 0 0-1 1v5.6c0 .5.2 1 .6 1.4l9.6 9.6a2 2 0 0 0 2.8 0l4.6-4.6a2 2 0 0 0 0-2.8z"/><circle cx="7.5" cy="7.5" r="1.2"/>',
+    share: '<circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="19" r="2.6"/><path d="M8.3 10.8l7.4-4.4M8.3 13.2l7.4 4.4"/>',
+    link: '<path d="M10 13.5a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.7 1.7"/><path d="M14 10.5a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.7-1.7"/>',
+    edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    frame: '<rect x="3" y="5" width="18" height="14" rx="1.5"/><rect x="7.5" y="9" width="9" height="6"/>',
+    arrow: '<path d="M7 17L17 7M8.5 7H17v8.5"/>',
+    upload: '<path d="M12 16V4M6 10l6-6 6 6"/><path d="M4 20h16"/>',
+    trash: '<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/>',
+  };
+
+  function icon(name, size) {
+    const s = size || 17;
+    return `<svg class="bi" viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+  }
+
   function blobToDataURL(blob) {
     return new Promise((resolve, reject) => {
       const fr = new FileReader();
@@ -543,7 +567,7 @@
 
   function artToXml(a) {
     const tag = (t, v) => v ? `<${t}>${esc(String(v))}</${t}>` : '';
-    return `<artwork>\n${tag('title', a.title)}${tag('artist', a.artist)}${tag('year', a.year)}${tag('era', a.era)}${tag('style', a.style)}${tag('category', a.category)}${tag('medium', a.medium)}${tag('materials', a.materials)}${tag('dimensions', a.dimensions)}${tag('location', a.location)}${tag('edition', a.edition)}${tag('price', a.price)}${tag('notes', a.notes)}</artwork>`;
+    return `<artwork>\n${tag('title', a.title)}${tag('artist', a.artist)}${tag('year', a.year)}${tag('era', a.era)}${tag('style', a.style)}${tag('category', a.category)}${tag('medium', a.medium)}${tag('materials', a.materials)}${tag('dimensions', a.dimensions)}${tag('location', a.location)}${tag('edition', a.edition)}${tag('price', a.price)}${tag('notes', a.notes)}${tag('ownership', a.owned)}${tag('sku', a.sku)}</artwork>`;
   }
 
   async function exportSelectedText() {
@@ -1180,13 +1204,13 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
                 <small>${esc(new Date(l.createdAt).toLocaleDateString())} · ${l.count} ${l.count === 1 ? 'piece' : 'pieces'}</small>
               </div>
               <div class="link-btns">
-                <button class="tool-btn" data-act="copy" title="Copy link">⎘</button>
-                <button class="tool-btn" data-act="share" title="Share link">↗</button>
-                <button class="tool-btn" data-act="open" title="Open">↑</button>
-                <button class="tool-btn" data-act="remove" title="Unpublish">🗑</button>
+                <button class="tool-btn" data-act="copy" title="Copy link" aria-label="Copy link">⎘</button>
+                <button class="tool-btn" data-act="share" title="Share link" aria-label="Share link">${icon('arrow', 15)}</button>
+                <button class="tool-btn" data-act="open" title="Open" aria-label="Open">↑</button>
+                <button class="tool-btn" data-act="remove" title="Unpublish" aria-label="Unpublish">${icon('trash', 15)}</button>
               </div>
             </div>`).join('')}</div>`
-          : `<p class="dialog-msg">No links yet. Open a piece and tap <b>Get link</b>, or select items with ☑ and tap 🔗.</p>`}
+          : `<p class="dialog-msg">No links yet. Open a piece and tap <b>Get link</b>, or select items and tap the link icon.</p>`}
           <p class="dialog-msg" id="links-status"></p>
           <div class="name-actions">
             <button class="ghost" id="links-settings">Settings</button>
@@ -1483,7 +1507,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = '🏷 Scan Label';
+          btn.innerHTML = `${icon('tag')}Scan Label`;
         }
       }
     };
@@ -1785,7 +1809,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
           <button class="ghost small" id="btn-export" type="button">↓ Export</button>
           <button class="ghost small" id="btn-import" type="button">↑ Import</button>
           <span class="backup-sep"></span>
-          <button class="ghost small" id="btn-links" type="button">🔗 Links</button>
+          <button class="ghost small" id="btn-links" type="button">${icon('link', 15)}Links</button>
         </div>`}
 
         ${state.selecting ? `
@@ -1793,8 +1817,8 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
           <button class="sel-all" id="sel-all" type="button">${state.selected.size && state.selected.size >= state.sets.length + state.artworks.filter((a) => !a.setId).length ? 'None' : 'All'}</button>
           <span class="sel-count">${state.selected.size} selected</span>
           <div class="sel-actions">
-            <button class="tool-btn sel-action" id="sel-link" title="Get link" ${state.selected.size ? '' : 'disabled'}>🔗</button>
-            <button class="tool-btn sel-action" id="sel-share" title="Share" ${state.selected.size ? '' : 'disabled'}>↗</button>
+            <button class="tool-btn sel-action" id="sel-link" title="Get link" aria-label="Get link" ${state.selected.size ? '' : 'disabled'}>${icon('link', 16)}</button>
+            <button class="tool-btn sel-action" id="sel-share" title="Share" aria-label="Share" ${state.selected.size ? '' : 'disabled'}>${icon('arrow', 16)}</button>
             <button class="tool-btn sel-action" id="sel-txt" title="Download text" ${state.selected.size ? '' : 'disabled'}>.txt</button>
             <button class="tool-btn sel-action" id="sel-xml" title="Download XML" ${state.selected.size ? '' : 'disabled'}>XML</button>
             <button class="tool-btn sel-action" id="sel-pdf" title="Save as PDF" ${state.selected.size ? '' : 'disabled'}>PDF</button>
@@ -2362,7 +2386,8 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
   function resetForm() {
     for (const u of form.vurls) if (u) URL.revokeObjectURL(u);
     for (const u of form.murls) if (u) URL.revokeObjectURL(u);
-    Object.assign(form, { images: [], vurls: [], murls: [], posters: [], durations: [], palette: [], titleTouched: false });
+    for (const u of form.coaUrls) if (u) URL.revokeObjectURL(u);
+    Object.assign(form, { images: [], vurls: [], murls: [], posters: [], durations: [], coa: [], coaUrls: [], palette: [], titleTouched: false });
     detail.index = 0;
   }
 
@@ -2417,6 +2442,8 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
       return b && b.size ? URL.createObjectURL(b) : undefined;
     });
     form.murls = images.map((b) => (isVideo(b) && b.size ? URL.createObjectURL(b) : null));
+    form.coa = (art.coa || []).map((c) => ({ blob: c.blob, name: c.name }));
+    form.coaUrls = form.coa.map((c) => (c.blob && c.blob.type && c.blob.type.startsWith('image/') ? URL.createObjectURL(c.blob) : null));
     form.palette = (art.palette || []).filter(validHex);
     form.titleTouched = true;
     render();
@@ -2458,6 +2485,20 @@ const paletteRow = form.palette.length
     const backLabel = editing ? 'Cancel' : '←';
     const backClass = editing ? 'text-btn' : 'icon-btn';
 
+    // Collapsible sections (Identification always open). Smart defaults:
+    // on edit, sections holding data start open; everything else collapsed.
+    const hasVal = (...vals) => vals.some((v) => v !== undefined && v !== null && String(v).trim() !== '');
+    const openClassification = editing && (hasVal(art.category, art.medium, art.materials, art.dimensions, art.location, art.edition, art.primaryColor) || (art.tags || []).length > 0);
+    const openOwnership = !editing ? false : hasVal(art.owned, art.sku) || (art.coa || []).length > 0;
+    const openValuation = !editing ? false : art.price != null || hasVal(art.acquired, art.provenance, art.notes);
+    const sec = (key, title, inner, open) => `
+      <div class="form-section${open ? '' : ' closed'}" data-sec="${key}">
+        <button class="sec-toggle" type="button" data-sec-toggle="${key}" aria-expanded="${open ? 'true' : 'false'}">
+          <h2>${title}</h2><span class="chev" aria-hidden="true">›</span>
+        </button>
+        <div class="sec-body"${open ? '' : ' hidden'}>${inner}</div>
+      </div>`;
+
     return `
       <div class="app sheet" id="form-sheet">
         <header class="sheet-header">
@@ -2471,12 +2512,12 @@ const paletteRow = form.palette.length
             <div class="photo-grid" id="photo-grid"></div>
             ${paletteRow}
             <div class="photo-actions">
-              <button class="primary" type="button" id="btn-capture">📷 Take photo</button>
-              <button class="ghost" type="button" id="btn-record">🎥 Record video</button>
-              <button class="ghost" type="button" id="btn-pick">Choose file(s)</button>
+              <button class="primary" type="button" id="btn-capture">${icon('camera')}Take photo</button>
+              <button class="ghost" type="button" id="btn-record">${icon('video')}Record video</button>
+              <button class="ghost" type="button" id="btn-pick">${icon('image')}Choose file(s)</button>
             </div>
             <p class="hint media-hint">Photos, or video clips of 30 seconds or less.</p>
-            <button class="scan-label-btn" type="button" id="btn-scan">🏷 Scan Label</button>
+            <button class="scan-label-btn" type="button" id="btn-scan">${icon('tag')}Scan Label</button>
             <input id="capture-input" type="file" accept="image/*" capture="environment" hidden />
             <input id="record-input" type="file" accept="video/*" capture hidden />
             <input id="pick-input" type="file" accept="image/*,video/*" multiple hidden />
@@ -2497,8 +2538,7 @@ const paletteRow = form.palette.length
             <label>Style / Movement<select id="f-style"><option value="">Select…</option>${presetOptions(STYLE_PRESETS, field('style'))}</select></label>
           </div>
 
-          <div class="form-section">
-            <h2>Classification</h2>
+          ${sec('classification', 'Classification', `
             <label>Category<select id="f-category">${catOptions}</select></label>
             <div class="grid2">
               <label>Medium<input id="f-medium" value="${field('medium')}" placeholder="Oil on canvas" autocomplete="off" /></label>
@@ -2517,23 +2557,38 @@ const paletteRow = form.palette.length
                 ${form.palette.map((c) => `<button type="button" class="chip-opt${field('primaryColor', '') === c ? ' on' : ''}" data-color="${esc(c)}" style="background:${esc(c)}"></button>`).join('')}
               </div>
             </label>
-          </div>
+          `, openClassification)}
 
-          <div class="form-section">
-            <h2>Visibility</h2>
+          ${sec('visibility', 'Visibility', `
             <div class="seg">${seg}</div>
             <p class="hint">Private: only you · Unlisted: anyone with the link · Public: shown on your portfolio</p>
-          </div>
+          `, false)}
 
-          <div class="form-section">
-            <h2>Valuation &amp; history</h2>
+          ${sec('ownership', 'Ownership', `
+            <div class="grid2">
+              <label>Ownership<select id="f-owned">
+                <option value="">Select…</option>
+                <option value="Yes"${art && art.owned === 'Yes' ? ' selected' : ''}>Yes</option>
+                <option value="No"${art && art.owned === 'No' ? ' selected' : ''}>No</option>
+              </select></label>
+              <label>Item # / SKU<input id="f-sku" value="${field('sku')}" placeholder="e.g. AW-0042" autocomplete="off" /></label>
+            </div>
+            <div class="coa-block">
+              <span class="coa-label">Certificate of authenticity (COA)</span>
+              <div class="coa-list" id="coa-list"></div>
+              <button class="ghost" type="button" id="btn-coa">${icon('upload')}Upload COA</button>
+            </div>
+            <input id="coa-input" type="file" accept="image/*,.pdf,application/pdf" multiple hidden />
+          `, openOwnership)}
+
+          ${sec('valuation', 'Valuation &amp; history', `
             <div class="grid2">
               <label>Purchase price (USD)<input id="f-price" inputmode="decimal" value="${art && art.price != null ? esc(art.price) : ''}" placeholder="12500" autocomplete="off" /></label>
               <label>Acquired<input id="f-acquired" value="${field('acquired')}" placeholder="2019-06-12" autocomplete="off" /></label>
             </div>
             <label>Provenance<textarea id="f-provenance" rows="2" placeholder="Estate of…, Christie’s lot 42, 2018">${field('provenance')}</textarea></label>
             <label>Notes<textarea id="f-notes" rows="3" placeholder="Condition notes, repairs, framing…">${field('notes')}</textarea></label>
-          </div>
+          `, openValuation)}
 
           <div class="form-error" id="form-error" hidden></div>
 
@@ -2702,6 +2757,259 @@ const paletteRow = form.palette.length
     })();
   }
 
+  /* ---------------- hang on wall (AR-style preview) ----------------
+     iOS Safari has no WebXR, so this is a camera-passthrough preview: the
+     live rear camera with the artwork corner-pinned on top, adjustable
+     horizontal/vertical perspective, all composited on one canvas. Snap
+     captures the composite as a still to keep, download or share. */
+
+  // Affine-slice perspective: maps an image onto any quad (trapezoids =
+  // walls in perspective). Same renderer for preview and stills.
+  function drawTexturedQuad(ctx, img, quad, slices) {
+    const w = img.naturalWidth, h = img.naturalHeight;
+    if (!w || !h) return;
+    const n = slices || 36;
+    const sw = w / n;
+    const at = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    const [tl, tr, br, bl] = quad;
+    for (let i = 0; i < n; i++) {
+      const p0t = at(tl, tr, i / n), p1t = at(tl, tr, (i + 1) / n);
+      const p0b = at(bl, br, i / n);
+      ctx.setTransform(p1t.x - p0t.x, p1t.y - p0t.y, p0b.x - p0t.x, p0b.y - p0t.y, p0t.x, p0t.y);
+      ctx.drawImage(img, i * sw, 0, sw, h, 0, 0, 1, 1);
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  function openHang(art) {
+    const src = imgs(art)[0];
+    if (!(src instanceof Blob) || !src.size) { alert('Add a photo to this piece first.'); return; }
+    if (!navigator.mediaDevices?.getUserMedia) { alert('Camera preview needs a browser with camera support.'); return; }
+    const overlay = document.createElement('div');
+    overlay.className = 'hang';
+    overlay.innerHTML = `
+      <div class="hang-top">
+        <span class="hang-title">Virtual View</span>
+        <button type="button" class="viewer-close" id="hang-close" aria-label="Close">✕</button>
+      </div>
+      <div class="hang-stage"><canvas id="hang-canvas"></canvas></div>
+      <div class="hang-controls" id="hang-controls">
+        <div class="hang-row"><span>↔ Wall angle</span><input type="range" id="hang-skewh" min="-1" max="1" step="0.01" value="0" /></div>
+        <div class="hang-row"><span>↕ Tilt</span><input type="range" id="hang-skewv" min="-1" max="1" step="0.01" value="0" /></div>
+        <div class="hang-row hang-presets">
+          <button type="button" data-preset="flat">Straight</button>
+          <button type="button" data-preset="left">Left wall</button>
+          <button type="button" data-preset="right">Right wall</button>
+          <button type="button" data-preset="up">Above</button>
+        </div>
+        <p class="hang-hint" id="hang-hint">Drag to move · pinch to resize</p>
+        <div class="hang-actions">
+          <button class="ghost" id="hang-cancel">Cancel</button>
+          <button class="primary" id="hang-snap">${icon('camera')}Snap still</button>
+        </div>
+      </div>
+      <div class="hang-result" id="hang-result" hidden>
+        <img id="hang-shot" alt="Wall preview still" />
+        <div class="hang-actions">
+          <button class="ghost" id="hang-retake">Retake</button>
+          <button class="ghost" id="hang-save">Save to piece</button>
+          <button class="primary" id="hang-share">Share</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const canvas = overlay.querySelector('#hang-canvas');
+    const ctx = canvas.getContext('2d');
+    const hint = overlay.querySelector('#hang-hint');
+    const skewhEl = overlay.querySelector('#hang-skewh');
+    const skewvEl = overlay.querySelector('#hang-skewv');
+
+    // Quad params in normalized canvas units.
+    const P = { cx: 0.5, cy: 0.42, scale: 0.52, skewH: 0, skewV: 0 };
+    let stream = null, raf = 0, alive = true, snapBlob = null, shotUrl = null;
+    const video = document.createElement('video');
+    video.muted = true; video.playsInline = true; video.preload = 'auto';
+    video.style.cssText = 'position:fixed;left:0;top:0;width:4px;height:4px;opacity:0;pointer-events:none;';
+    const artUrl = URL.createObjectURL(src);
+    const img = new Image();
+    let aspect = 1;
+    img.onload = () => { aspect = (img.naturalWidth || 1) / (img.naturalHeight || 1); };
+    img.src = artUrl;
+
+    const cleanup = () => {
+      alive = false;
+      cancelAnimationFrame(raf);
+      for (const t of (stream && stream.getTracks()) || []) { try { t.stop(); } catch {} }
+      video.removeAttribute('src');
+      try { video.load(); } catch {}
+      video.remove();
+      URL.revokeObjectURL(artUrl);
+      if (shotUrl) URL.revokeObjectURL(shotUrl);
+      overlay.remove();
+    };
+
+    const quadFor = () => {
+      const cw = canvas.width, ch = canvas.height;
+      const w = Math.max(10, P.scale * cw);
+      const h = w / aspect;
+      const cx = P.cx * cw, cy = P.cy * ch;
+      const x0 = cx - w / 2, x1 = cx + w / 2, y0 = cy - h / 2, y1 = cy + h / 2;
+      return [
+        { x: x0 + P.skewH * w * 0.25, y: y0 + P.skewV * h * 0.25 },
+        { x: x1 - P.skewH * w * 0.25, y: y0 - P.skewV * h * 0.25 },
+        { x: x1 - P.skewH * w * 0.25, y: y1 - P.skewV * h * 0.25 },
+        { x: x0 + P.skewH * w * 0.25, y: y1 - P.skewV * h * 0.25 },
+      ];
+    };
+
+    const frame = () => {
+      if (!alive || !document.body.contains(canvas)) return;
+      const cw = canvas.width, ch = canvas.height;
+      const vw = video.videoWidth, vh = video.videoHeight;
+      if (vw && vh && video.readyState >= 2) {
+        const s = Math.max(cw / vw, ch / vh);
+        const dw = vw * s, dh = vh * s;
+        ctx.drawImage(video, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+      } else {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, cw, ch);
+      }
+      if (img.complete && img.naturalWidth) {
+        const q = quadFor();
+        drawTexturedQuad(ctx, img, q);
+        // thin frame edge sells the hang
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = Math.max(1.5, cw / 500);
+        ctx.beginPath();
+        ctx.moveTo(q[0].x, q[0].y);
+        for (let i = 1; i < 4; i++) ctx.lineTo(q[i].x, q[i].y);
+        ctx.closePath();
+        ctx.stroke();
+      }
+      raf = requestAnimationFrame(frame);
+    };
+
+    const fitCanvas = () => {
+      const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+      const s = Math.min(1, 1600 / vw);
+      canvas.width = Math.max(2, Math.round(vw * s));
+      canvas.height = Math.max(2, Math.round(vh * s));
+    };
+
+    // drag to move, pinch to resize
+    const pts = new Map();
+    let pinchD0 = 0, scale0 = 1;
+    canvas.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      try { canvas.setPointerCapture(e.pointerId); } catch {}
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        pinchD0 = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+        scale0 = P.scale;
+      }
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!pts.has(e.pointerId)) return;
+      const prev = pts.get(e.pointerId);
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const r = canvas.getBoundingClientRect();
+      if (pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+        P.scale = Math.max(0.08, Math.min(1.4, (scale0 * d) / pinchD0));
+      } else if (pts.size === 1) {
+        P.cx = Math.max(-0.3, Math.min(1.3, P.cx + (e.clientX - prev.x) / Math.max(1, r.width)));
+        P.cy = Math.max(-0.3, Math.min(1.3, P.cy + (e.clientY - prev.y) / Math.max(1, r.height)));
+      }
+    });
+    const endPt = (e) => { pts.delete(e.pointerId); };
+    canvas.addEventListener('pointerup', endPt);
+    canvas.addEventListener('pointercancel', endPt);
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    skewhEl.addEventListener('input', () => { P.skewH = Number(skewhEl.value); });
+    skewvEl.addEventListener('input', () => { P.skewV = Number(skewvEl.value); });
+    const presets = { flat: [0, 0], left: [0, 0.7], right: [0, -0.7], up: [0.6, 0] };
+    for (const b of overlay.querySelectorAll('[data-preset]')) {
+      b.addEventListener('click', () => {
+        const [h, v] = presets[b.dataset.preset] || [0, 0];
+        P.skewH = h; P.skewV = v;
+        skewhEl.value = String(h); skewvEl.value = String(v);
+      });
+    }
+
+    overlay.querySelector('#hang-cancel').addEventListener('click', cleanup);
+    overlay.querySelector('#hang-close').addEventListener('click', cleanup);
+    overlay.querySelector('#hang-snap').addEventListener('click', () => {
+      canvas.toBlob((b) => {
+        if (!b) { hint.textContent = 'Snap failed — try again.'; return; }
+        snapBlob = b;
+        if (shotUrl) URL.revokeObjectURL(shotUrl);
+        shotUrl = URL.createObjectURL(b);
+        overlay.querySelector('#hang-shot').src = shotUrl;
+        overlay.querySelector('#hang-controls').hidden = true;
+        overlay.querySelector('#hang-result').hidden = false;
+      }, 'image/jpeg', 0.92);
+    });
+    overlay.querySelector('#hang-retake').addEventListener('click', () => {
+      snapBlob = null;
+      overlay.querySelector('#hang-result').hidden = true;
+      overlay.querySelector('#hang-controls').hidden = false;
+    });
+    overlay.querySelector('#hang-save').addEventListener('click', async () => {
+      if (!snapBlob) return;
+      const rec = state.artworks.find((a) => a.id === art.id);
+      if (!rec) { cleanup(); return; }
+      const images = [...imgs(rec), snapBlob];
+      try {
+        await CollectorDB.updateArt(art.id, {
+          images, image: images[0],
+          posters: [...postersOf(rec), null],
+          durations: [...durationsOf(rec), null],
+        });
+        state.notice = 'Wall preview saved to this piece.';
+      } catch {
+        state.notice = 'Could not save the still. Storage may be full.';
+      }
+      cleanup();
+      await reload();
+    });
+    overlay.querySelector('#hang-share').addEventListener('click', () => {
+      if (!snapBlob) return;
+      shareContent({
+        title: art.title || 'Untitled',
+        subject: `Virtual view: ${art.title || 'Untitled'}`,
+        text: artToText(art),
+        files: [new File([snapBlob], safeName(art.title) + '-wall.jpg', { type: 'image/jpeg' })],
+      });
+    });
+
+    (async () => {
+      try {
+        const hd = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { ...hd, facingMode: 'environment' }, audio: false });
+        } catch (e) {
+          if (e && (e.name === 'OverconstrainedError' || e.name === 'NotFoundError')) {
+            stream = await navigator.mediaDevices.getUserMedia({ video: hd, audio: false });
+          } else {
+            throw e;
+          }
+        }
+      } catch {
+        hint.textContent = 'Camera blocked. Allow access and reopen.';
+        overlay.querySelector('#hang-snap').disabled = true;
+        return;
+      }
+      document.body.appendChild(video);
+      video.srcObject = stream;
+      video.onloadedmetadata = () => { fitCanvas(); };
+      try { await video.play(); } catch {}
+      fitCanvas();
+      raf = requestAnimationFrame(frame);
+    })();
+  }
+
   async function handleFile(file) {
     await handleFiles([file]);
   }
@@ -2793,7 +3101,7 @@ const paletteRow = form.palette.length
         .join('');
     } else {
       grid.innerHTML =
-        '<div class="photo-placeholder"><span class="photo-icon">📷</span><p>Add photos or a video clip (30 sec max) — colors are detected automatically</p></div>';
+        `<div class="photo-placeholder"><span class="photo-icon">${icon('camera', 40)}</span><p>Add photos or a video clip (30 sec max) — colors are detected automatically</p></div>`;
     }
 
     for (const v of grid.querySelectorAll('.tile-vid')) {
@@ -2932,7 +3240,58 @@ const paletteRow = form.palette.length
       });
     }
 
+    // Collapsible sections toggle in place (no re-render, so typed input survives).
+    for (const t of shell.querySelectorAll('[data-sec-toggle]')) {
+      t.addEventListener('click', () => {
+        const section = t.closest('.form-section');
+        if (!section) return;
+        const body = section.querySelector('.sec-body');
+        if (!body) return;
+        const open = body.hidden;
+        body.hidden = !open;
+        section.classList.toggle('closed', !open);
+        t.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    }
+
+    shell.querySelector('#btn-coa')?.addEventListener('click', () => shell.querySelector('#coa-input').click());
+    shell.querySelector('#coa-input')?.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files || []);
+      e.target.value = '';
+      for (const f of files) {
+        if (!f) continue;
+        form.coa.push({ blob: f, name: f.name || 'Document' });
+        form.coaUrls.push(f.type && f.type.startsWith('image/') ? URL.createObjectURL(f) : null);
+      }
+      renderCoaList();
+    });
+
     renderPhotoPane();
+    renderCoaList();
+  }
+
+  function renderCoaList() {
+    const shell = document.getElementById('form-sheet');
+    if (!shell) return;
+    const list = shell.querySelector('#coa-list');
+    if (!list) return;
+    list.innerHTML = form.coa.length
+      ? form.coa.map((c, i) => {
+          const thumb = c.blob && c.blob.type && c.blob.type.startsWith('image/') && form.coaUrls[i]
+            ? `<img class="coa-thumb" src="${esc(form.coaUrls[i])}" alt="" />`
+            : '<span class="coa-doc" aria-hidden="true">📄</span>';
+          return `<div class="coa-item" data-i="${i}">${thumb}<span class="coa-name">${esc(c.name || 'Document')}</span><button type="button" class="coa-x" data-i="${i}" aria-label="Remove document">×</button></div>`;
+        }).join('')
+      : '<p class="hint">No certificate attached.</p>';
+    for (const btn of list.querySelectorAll('.coa-x')) {
+      btn.addEventListener('click', () => {
+        const i = Number(btn.dataset.i);
+        if (form.coaUrls[i]) URL.revokeObjectURL(form.coaUrls[i]);
+        form.coa.splice(i, 1);
+        form.coaUrls.splice(i, 1);
+        renderCoaList();
+      });
+    }
   }
 
   async function saveForm() {
@@ -2987,6 +3346,9 @@ const paletteRow = form.palette.length
       acquired: val('#f-acquired'),
       provenance: val('#f-provenance'),
       notes: val('#f-notes'),
+      owned: val('#f-owned') || undefined,
+      sku: val('#f-sku') || undefined,
+      coa: form.coa.map((c) => ({ blob: c.blob, name: c.name })),
       images: form.images.slice(),
       image: form.images[0],
       posters: form.posters.slice(),
@@ -3273,7 +3635,10 @@ const paletteRow = form.palette.length
       row('Price (USD)', art.price != null ? `$${Number(art.price).toLocaleString()}` : undefined) +
       row('Acquired', art.acquired) +
       row('Provenance', art.provenance) +
-      row('Notes', art.notes);
+      row('Notes', art.notes) +
+      row('Ownership', art.owned) +
+      row('Item #', art.sku) +
+      (art.coa?.length ? `<div class="meta-row"><dt>Certificate</dt><dd class="coa-links">${art.coa.map((c, i) => `<button class="ghost small" data-coa="${i}">${esc(c.name || 'Certificate')} ${icon('arrow', 13)}</button>`).join('')}</dd></div>` : '');
     return `
       <div class="app detail">
         <header class="sheet-header detail-header">
@@ -3290,9 +3655,10 @@ const paletteRow = form.palette.length
           ${art.palette?.length ? `<div class="palette-row big">${art.palette.map((c) => `<span style="background:${esc(c)}" title="${esc(c)}"></span>`).join('')}</div>` : ''}
           <div class="meta">${meta}</div>
           <div class="detail-actions">
-            <button class="ghost wide" id="detail-edit2">Edit</button>
-            <button class="ghost wide" id="detail-share">Share photos</button>
-            <button class="ghost wide" id="detail-link">Get link</button>
+            <button class="ghost wide" id="detail-edit2">${icon('edit')}Edit</button>
+            <button class="ghost wide" id="detail-share">${icon('share')}Share photos</button>
+            <button class="ghost wide" id="detail-link">${icon('link')}Get link</button>
+            <button class="ghost wide" id="detail-hang">${icon('frame')}Virtual View</button>
             <button class="ghost danger-ghost wide" id="detail-delete">Delete</button>
             <div class="confirm-row" id="confirm-row" hidden>
               <span>Delete this piece?</span>
@@ -3385,6 +3751,21 @@ const paletteRow = form.palette.length
       if (!art) return;
       publishLink({ title: art.title || 'Untitled', groups: [{ name: '', pieces: [art] }] });
     });
+    shell.querySelector('#detail-hang')?.addEventListener('click', () => {
+      const art = state.artworks.find((a) => a.id === state.activeId);
+      if (!art) return;
+      openHang(art);
+    });
+    for (const b of shell.querySelectorAll('[data-coa]')) {
+      b.addEventListener('click', () => {
+        const art = state.artworks.find((a) => a.id === state.activeId);
+        const c = art?.coa?.[Number(b.dataset.coa)];
+        if (!c?.blob) return;
+        const u = URL.createObjectURL(c.blob);
+        window.open(u, '_blank', 'noopener');
+        setTimeout(() => URL.revokeObjectURL(u), 60000);
+      });
+    }
   }
 
   /* ---------------- export / import ---------------- */
@@ -3400,12 +3781,16 @@ const paletteRow = form.palette.length
         const posterUrls = await Promise.all(
           postersOf(a).map((b) => (b && b.size ? blobToDataURL(b) : null))
         );
+        const coaUrls = await Promise.all(
+          (a.coa || []).map(async (c) => (c?.blob?.size ? { name: c.name || 'Document', dataUrl: await blobToDataURL(c.blob) } : null))
+        );
         return {
           ...rest,
           imagesDataUrl: dataUrls.filter(Boolean),
           imageDataUrl: dataUrls[0] || null,
           postersDataUrl: posterUrls,
           durations: durationsOf(a),
+          coaDataUrl: coaUrls.filter(Boolean),
         };
       })
     );
@@ -3451,13 +3836,17 @@ const paletteRow = form.palette.length
           try { return srcPosters[i] ? dataURLToBlob(srcPosters[i]) : null; } catch { return null; }
         });
         const durations = images.map((_, i) => (typeof srcDurs[i] === 'number' ? srcDurs[i] : null));
-        const { imagesDataUrl, imageDataUrl, postersDataUrl, durations: _d, id, ...rest } = item;
+        const coa = (Array.isArray(item.coaDataUrl) ? item.coaDataUrl : []).map((c) => {
+          try { return { blob: dataURLToBlob(c.dataUrl), name: c.name || 'Document' }; } catch { return null; }
+        }).filter((c) => c && c.blob.size);
+        const { imagesDataUrl, imageDataUrl, postersDataUrl, durations: _d, coaDataUrl, id, ...rest } = item;
         await CollectorDB.addArt({
           ...rest,
           images,
           image: images[0],
           posters,
           durations,
+          coa,
           setId: setIdMap[item.setId] || undefined,
           createdAt: item.createdAt || Date.now(),
         });
