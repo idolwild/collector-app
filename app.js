@@ -120,7 +120,7 @@
     try { localStorage.setItem(THEME_KEY, next); } catch {}
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.content = next === 'light' ? '#e9ebef' : '#08080a';
-    for (const b of document.querySelectorAll('#btn-theme, #set-theme')) {
+    for (const b of document.querySelectorAll('#btn-theme')) {
       b.innerHTML = themeIcon();
       b.title = next === 'light' ? 'Dark mode' : 'Light mode';
     }
@@ -128,6 +128,159 @@
 
   function toggleTheme() {
     applyTheme(currentTheme() === 'light' ? 'dark' : 'light');
+  }
+
+  /* ---------------- profile (on-device for now) ----------------
+     Display name + avatar live in localStorage. When real member logins
+     arrive, replace Profile.load/save/clear with server calls — the UI
+     (avatar button, greeting, account panel) stays exactly the same. */
+
+  const PROFILE_KEY = 'collector_profile';
+
+  const Profile = {
+    load() {
+      try {
+        const p = JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null');
+        if (p && typeof p === 'object') {
+          return {
+            name: typeof p.name === 'string' ? p.name : '',
+            avatar: typeof p.avatar === 'string' ? p.avatar : null,
+            createdAt: typeof p.createdAt === 'number' ? p.createdAt : Date.now(),
+          };
+        }
+      } catch {}
+      return null;
+    },
+    save(p) {
+      const prev = this.load();
+      const next = {
+        name: (p.name || '').trim(),
+        avatar: p.avatar || null,
+        createdAt: (prev && prev.createdAt) || Date.now(),
+      };
+      try { localStorage.setItem(PROFILE_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    },
+    clear() {
+      try { localStorage.removeItem(PROFILE_KEY); } catch {}
+    },
+  };
+
+  function firstName(n) {
+    return String(n || '').trim().split(/\s+/)[0] || '';
+  }
+
+  function avatarButtonHTML(id) {
+    const p = Profile.load();
+    const inner = p && p.avatar
+      ? `<img src="${p.avatar}" alt="" />`
+      : p && p.name
+        ? `<span aria-hidden="true">${esc(firstName(p.name)[0].toUpperCase())}</span>`
+        : '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>';
+    return `<button class="avatar-btn" id="${id}" type="button" title="Profile" aria-label="Profile">${inner}</button>`;
+  }
+
+  function greetingHTML() {
+    const p = Profile.load();
+    return p && p.name ? `Hello, ${esc(firstName(p.name))} · ` : '';
+  }
+
+  // Square-crop + shrink any image to a tiny JPEG for localStorage.
+  function makeAvatar(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const im = new Image();
+      im.onload = () => {
+        URL.revokeObjectURL(url);
+        try {
+          const nw = im.naturalWidth || 1, nh = im.naturalHeight || 1;
+          const side = Math.min(nw, nh);
+          const c = document.createElement('canvas');
+          c.width = 256; c.height = 256;
+          c.getContext('2d').drawImage(im, (nw - side) / 2, (nh - side) / 2, side, side, 0, 0, 256, 256);
+          c.toBlob(async (b) => {
+            if (!b) { reject(new Error('bad image')); return; }
+            resolve(await blobToDataURL(b));
+          }, 'image/jpeg', 0.85);
+        } catch (e) { reject(e); }
+      };
+      im.onerror = () => { URL.revokeObjectURL(url); reject(new Error('bad image')); };
+      im.src = url;
+    });
+  }
+
+  function showProfileDialog() {
+    const existing = Profile.load();
+    const pieces = state.artworks.length;
+    const sets = state.sets.length;
+    const videos = state.artworks.filter((a) => imgs(a).some(isVideo)).length;
+    let avatar = (existing && existing.avatar) || null;
+    const overlay = document.createElement('div');
+    overlay.className = 'name-overlay';
+    overlay.innerHTML = `
+      <div class="name-card profile-card" role="dialog" aria-modal="true" aria-label="Profile">
+        <h2>Profile</h2>
+        <button class="profile-hero" id="prof-avatar" type="button" title="Change photo" aria-label="Change profile photo">
+          ${avatar ? `<img src="${avatar}" alt="" />` : '<span>Add photo</span>'}
+        </button>
+        <input id="prof-file" type="file" accept="image/*" hidden />
+        <label>Display name<input id="prof-name" value="${esc((existing && existing.name) || '')}" placeholder="e.g. Marie" autocomplete="off" maxlength="40" /></label>
+        <div class="profile-stats">
+          <div><b>${pieces}</b><span>Piece${pieces === 1 ? '' : 's'}</span></div>
+          <div><b>${sets}</b><span>Set${sets === 1 ? '' : 's'}</span></div>
+          <div><b>${videos}</b><span>Video${videos === 1 ? '' : 's'}</span></div>
+        </div>
+        <p class="dialog-msg">${existing ? `Member since ${esc(new Date(existing.createdAt).toLocaleDateString())} · stored on this device only.` : 'Stored on this device only.'}</p>
+        <p class="dialog-msg" id="prof-status"></p>
+        <div class="name-actions">
+          ${existing ? '<button class="ghost small danger-ghost" id="prof-remove">Remove</button>' : ''}
+          <span class="spacer"></span>
+          <button class="ghost" id="prof-cancel">Cancel</button>
+          <button class="primary" id="prof-save">Save</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const status = overlay.querySelector('#prof-status');
+    const hero = overlay.querySelector('#prof-avatar');
+    const nameInput = overlay.querySelector('#prof-name');
+    const close = () => overlay.remove();
+    overlay.querySelector('#prof-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    hero.addEventListener('click', () => overlay.querySelector('#prof-file').click());
+    overlay.querySelector('#prof-file').addEventListener('change', async (e) => {
+      const f = e.target.files?.[0];
+      e.target.value = '';
+      if (!f) return;
+      status.textContent = 'Processing photo…';
+      try {
+        avatar = await makeAvatar(f);
+        hero.innerHTML = `<img src="${avatar}" alt="" />`;
+        status.textContent = '';
+      } catch {
+        status.textContent = 'That photo could not be used.';
+      }
+    });
+    overlay.querySelector('#prof-save').addEventListener('click', () => {
+      const name = nameInput.value.trim();
+      if (!name) {
+        status.textContent = 'Enter a display name.';
+        nameInput.focus();
+        return;
+      }
+      Profile.save({ name, avatar });
+      close();
+      render();
+    });
+    overlay.querySelector('#prof-remove')?.addEventListener('click', async () => {
+      overlay.hidden = true;
+      const ok = await showConfirmDialog({ title: 'Remove profile?', message: 'Your name and photo are removed from this device. Your collection stays exactly as it is.', confirmText: 'Remove', danger: true });
+      overlay.hidden = false;
+      if (!ok) return;
+      Profile.clear();
+      close();
+      render();
+    });
+    setTimeout(() => nameInput.focus(), 30);
   }
 
   function activeSet() {
@@ -150,7 +303,7 @@
 
   const root = document.getElementById('root');
 
-  const APP_VERSION = 'v34';
+  const APP_VERSION = 'v37';
 
   function imgs(a) {
     const list = Array.isArray(a.images) && a.images.length ? a.images : [a.image];
@@ -1603,13 +1756,14 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
             <img class="brand-mark" src="./logo.svg" alt="Collector" title="Collector" />
             <div>
               <h1>Collector</h1>
-              <p class="count">${countText()}</p>
+              <p class="count">${greetingHTML()}${countText()}</p>
             </div>
           </button>
           <div class="top-actions">
+            ${avatarButtonHTML('btn-profile')}
             <button class="tool-btn" id="btn-theme" title="${themeTitle()}">${themeIcon()}</button>
             <button class="tool-btn" id="btn-select" title="Select items">${state.selecting ? '✕' : '☑'}</button>
-            <button class="add-btn" id="btn-add" title="Create a new set"><span class="add-icon">+</span> New Set</button>
+            <button class="add-btn" id="btn-add" title="Create a new set"><span class="add-icon">+</span><span class="add-label">Set</span></button>
           </div>
         </header>
 
@@ -1627,7 +1781,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
 
         ${state.selecting ? '' : `
         <div class="backup-row">
-          <span class="backup-label">Backup</span>
+          <span class="backup-label">Backup · ${APP_VERSION}</span>
           <button class="ghost small" id="btn-export" type="button">↓ Export</button>
           <button class="ghost small" id="btn-import" type="button">↑ Import</button>
           <span class="backup-sep"></span>
@@ -1735,7 +1889,6 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     const n = state.artworks.length;
     let t = `${n} ${n === 1 ? 'piece' : 'pieces'}`;
     if (state.sets.length) t += ` · ${state.sets.length} ${state.sets.length === 1 ? 'set' : 'sets'}`;
-    if (APP_VERSION) t += ` · ${APP_VERSION}`;
     return t;
   }
 
@@ -2002,10 +2155,13 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
             </div>
           </div>
           <div class="top-actions">
-            <button class="tool-btn" id="set-theme" title="${themeTitle()}">${themeIcon()}</button>
-            <button class="tool-btn" id="set-rename" title="Rename set">✎</button>
-            <button class="tool-btn" id="set-delete" title="Delete set">🗑</button>
-            <button class="add-btn" id="set-add" title="Add to this set"><span class="add-icon">+</span> Add</button>
+            ${avatarButtonHTML('set-profile')}
+            <button class="add-btn" id="set-add" title="Add to this set"><span class="add-icon">+</span><span class="add-label">Add</span></button>
+            <button class="tool-btn" id="set-menu" title="Set options" aria-label="Set options" aria-haspopup="menu">···</button>
+          </div>
+          <div class="menu-pop" id="set-menu-pop" hidden role="menu" aria-label="Set options">
+            <button type="button" id="set-rename" role="menuitem"><span aria-hidden="true">✎</span><span>Rename set</span></button>
+            <button type="button" id="set-delete" class="danger-item" role="menuitem"><span aria-hidden="true">🗑</span><span>Delete set</span></button>
           </div>
         </header>
 
@@ -2027,11 +2183,32 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
 
   function attachSet() {
     const el = root;
-    el.querySelector('#set-theme')?.addEventListener('click', toggleTheme);
+    el.querySelector('#set-profile')?.addEventListener('click', showProfileDialog);
+    const menuBtn = el.querySelector('#set-menu');
+    const menuPop = el.querySelector('#set-menu-pop');
+    const closeMenu = () => { if (menuPop) menuPop.hidden = true; };
+    menuBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!menuPop.hidden) { closeMenu(); return; }
+      menuPop.hidden = false;
+      // Self-removing closer: any outside tap or Escape shuts the menu.
+      setTimeout(() => {
+        const closer = (ev) => {
+          if (ev.type === 'keydown' && ev.key !== 'Escape') return;
+          if (ev.type === 'click' && menuPop.contains(ev.target)) return;
+          closeMenu();
+          document.removeEventListener('click', closer);
+          document.removeEventListener('keydown', closer);
+        };
+        document.addEventListener('click', closer);
+        document.addEventListener('keydown', closer);
+      }, 0);
+    });
     el.querySelector('#set-back')?.addEventListener('click', goHome);
     el.querySelector('#set-add')?.addEventListener('click', () => openNewInSet(activeSet().id));
     el.querySelector('#set-add2')?.addEventListener('click', () => openNewInSet(activeSet().id));
     el.querySelector('#set-rename')?.addEventListener('click', async () => {
+      closeMenu();
       const set = activeSet();
       if (!set) return;
       const name = await showNameDialog({
@@ -2045,6 +2222,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
       await reload();
     });
     el.querySelector('#set-delete')?.addEventListener('click', async () => {
+      closeMenu();
       const ok = await showConfirmDialog({
         title: 'Delete this set?',
         message: 'Pieces stay in your catalog — only the grouping is removed.',
@@ -2136,6 +2314,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
       render();
     });
 
+    el.querySelector('#btn-profile')?.addEventListener('click', showProfileDialog);
     el.querySelector('#btn-theme')?.addEventListener('click', toggleTheme);
     el.querySelector('#btn-select')?.addEventListener('click', toggleSelecting);
     el.querySelector('#sel-all')?.addEventListener('click', selectAll);

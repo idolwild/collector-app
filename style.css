@@ -137,6 +137,12 @@ input[type='search']::-webkit-search-cancel-button {
   align-items: center;
   gap: 12px;
   min-width: 0;
+  flex: 1;
+}
+
+.brand > div {
+  min-width: 0;
+  flex: 1;
 }
 
 .brand-mark {
@@ -161,6 +167,8 @@ input[type='search']::-webkit-search-cancel-button {
   font-size: 12px;
   color: var(--text-dim);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .top-actions {
@@ -172,6 +180,93 @@ input[type='search']::-webkit-search-cancel-button {
 
 .tool-btn svg {
   display: block;
+}
+
+/* ---------- Profile ---------- */
+.avatar-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 16px;
+  flex: none;
+  padding: 0;
+}
+
+.avatar-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.avatar-btn svg {
+  display: block;
+}
+
+.profile-hero {
+  width: 96px;
+  height: 96px;
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 2px auto;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.profile-hero img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.profile-stats {
+  display: flex;
+  text-align: center;
+}
+
+.profile-stats div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+}
+
+.profile-stats div + div {
+  border-left: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.profile-stats b {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-stats span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.spacer {
+  flex: 1;
 }
 
 .tool-btn {
@@ -306,6 +401,81 @@ input[type='search']::-webkit-search-cancel-button {
 
 .set-title {
   min-width: 0;
+  flex: 1;
+}
+
+.set-title .count {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- Header option menu ---------- */
+.menu-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 12px;
+  z-index: 60;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 18px;
+  background: linear-gradient(165deg, rgba(46, 47, 54, 0.97), rgba(13, 13, 16, 0.97));
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.menu-pop[hidden] {
+  display: none;
+}
+
+.menu-pop button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+  font-family: inherit;
+}
+
+.menu-pop button:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.menu-pop .danger-item {
+  color: #ff9d92;
+}
+
+[data-theme='light'] .menu-pop {
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.97), rgba(238, 240, 243, 0.97));
+  border-color: rgba(20, 22, 28, 0.12);
+  box-shadow: 0 16px 44px rgba(30, 32, 40, 0.22);
+}
+
+[data-theme='light'] .menu-pop button:active {
+  background: rgba(20, 22, 28, 0.07);
+}
+
+/* Icon-only Add buttons on narrow phones */
+@media (max-width: 380px) {
+  .top-actions .add-label {
+    display: none;
+  }
+  .top-actions .add-btn {
+    padding: 9px 11px;
+  }
+  .brand {
+    gap: 8px;
+  }
 }
 
 .set-title h1 {
@@ -2218,4 +2388,18 @@ input[type='search']::-webkit-search-cancel-button {
 
 [data-theme='light'] .set-mono {
   color: rgba(255, 255, 255, 0.92);
+}
+
+[data-theme='light'] .avatar-btn {
+  border-color: rgba(20, 22, 28, 0.16);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+[data-theme='light'] .profile-hero {
+  border-color: rgba(20, 22, 28, 0.2);
+  background: rgba(20, 22, 28, 0.05);
+}
+
+[data-theme='light'] .profile-stats div + div {
+  border-color: rgba(20, 22, 28, 0.12);
 }
