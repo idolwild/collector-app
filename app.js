@@ -305,7 +305,7 @@
 
   const root = document.getElementById('root');
 
-  const APP_VERSION = 'v40';
+  const APP_VERSION = 'v43';
 
   function imgs(a) {
     const list = Array.isArray(a.images) && a.images.length ? a.images : [a.image];
@@ -480,6 +480,7 @@
     edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
     frame: '<rect x="3" y="5" width="18" height="14" rx="1.5"/><rect x="7.5" y="9" width="9" height="6"/>',
     arrow: '<path d="M7 17L17 7M8.5 7H17v8.5"/>',
+    mic: '<path d="M12 1.5a3 3 0 0 0-3 3v7.5a3 3 0 0 0 6 0V4.5a3 3 0 0 0-3-3z"/><path d="M19 10.5v1.5a7 7 0 0 1-14 0v-1.5M12 19v3.5M8.5 22.5h7"/>',
     upload: '<path d="M12 16V4M6 10l6-6 6 6"/><path d="M4 20h16"/>',
     trash: '<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/>',
   };
@@ -487,6 +488,93 @@
   function icon(name, size) {
     const s = size || 17;
     return `<svg class="bi" viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+  }
+
+  // Dictation (Web Speech API). Only exposed where the browser has it —
+  // notably absent on insecure origins, where the button stays hidden.
+  const CanDictate = !!(
+    window.SpeechRecognition || window.webkitSpeechRecognition
+  );
+
+  function attachDictation(btnId, areaId) {
+    const btn = document.getElementById(btnId);
+    const area = document.getElementById(areaId);
+    if (!btn || !area) return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { btn.hidden = true; return; }
+    let rec = null, wantOn = false, quickFails = 0, sessionStart = 0;
+    const setUI = (on) => {
+      btn.classList.toggle('recording', on);
+      btn.title = on ? 'Stop dictation' : 'Dictate notes';
+      btn.setAttribute('aria-label', on ? 'Stop dictation' : 'Dictate notes');
+    };
+    // Fresh recognizer per session; base text captured at session start so
+    // resumed sessions never duplicate what's already written.
+    const begin = (base) => {
+      try {
+        rec = new SR();
+      } catch {
+        wantOn = false;
+        setUI(false);
+        return;
+      }
+      rec.lang = navigator.language || 'en-US';
+      rec.interimResults = true;
+      rec.continuous = true;
+      let committed = '';
+      sessionStart = Date.now();
+      rec.onresult = (e) => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) committed += t;
+          else interim += t;
+        }
+        area.value = (base + committed + interim).replace(/^\s+/, '');
+        area.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      rec.onend = () => {
+        if (!wantOn) { setUI(false); return; }
+        // iPhones end sessions on pauses — resume transparently. Give up if
+        // sessions keep dying instantly (no mic, no network, …).
+        if (Date.now() - sessionStart < 1500) quickFails++;
+        else quickFails = 0;
+        if (quickFails >= 3) {
+          wantOn = false;
+          setUI(false);
+          return;
+        }
+        setTimeout(() => {
+          if (wantOn) begin(area.value ? area.value.replace(/\s+$/, '') + ' ' : '');
+        }, 300);
+      };
+      rec.onerror = (e) => {
+        if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) {
+          wantOn = false;
+          quickFails = 99;
+          setUI(false);
+        }
+        // other errors end the session next, where resume is handled
+      };
+      try {
+        rec.start();
+      } catch {
+        wantOn = false;
+        setUI(false);
+      }
+    };
+    const start = () => {
+      wantOn = true;
+      quickFails = 0;
+      setUI(true);
+      begin(area.value ? area.value.replace(/\s+$/, '') + ' ' : '');
+    };
+    const stop = () => {
+      wantOn = false;
+      try { rec && rec.stop(); } catch {}
+      setUI(false);
+    };
+    btn.addEventListener('click', () => (wantOn ? stop() : start()));
   }
 
   function blobToDataURL(blob) {
@@ -2587,7 +2675,7 @@ const paletteRow = form.palette.length
               <label>Acquired<input id="f-acquired" value="${field('acquired')}" placeholder="2019-06-12" autocomplete="off" /></label>
             </div>
             <label>Provenance<textarea id="f-provenance" rows="2" placeholder="Estate of…, Christie’s lot 42, 2018">${field('provenance')}</textarea></label>
-            <label>Notes<textarea id="f-notes" rows="3" placeholder="Condition notes, repairs, framing…">${field('notes')}</textarea></label>
+            <label>Notes<div class="dict-row"><textarea id="f-notes" rows="3" placeholder="Condition notes, repairs, framing…">${field('notes')}</textarea>${CanDictate ? `<button class="mic-btn" type="button" id="btn-dictate" title="Dictate notes" aria-label="Dictate notes">${icon('mic', 20)}</button>` : ''}</div></label>
           `, openValuation)}
 
           <div class="form-error" id="form-error" hidden></div>
@@ -2784,7 +2872,11 @@ const paletteRow = form.palette.length
   function openHang(art) {
     const src = imgs(art)[0];
     if (!(src instanceof Blob) || !src.size) { alert('Add a photo to this piece first.'); return; }
-    if (!navigator.mediaDevices?.getUserMedia) { alert('Camera preview needs a browser with camera support.'); return; }
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      const secureUrl = `https://${location.hostname}:8443${location.pathname}`;
+      alert(`Virtual View needs the camera, which Apple only allows over a secure connection.\n\nOpen this app at:\n${secureUrl}\n\nTip: if that address shows a different collection, move it over with ↓ Export / ↑ Import — each address keeps its own copy.`);
+      return;
+    }
     const overlay = document.createElement('div');
     overlay.className = 'hang';
     overlay.innerHTML = `
@@ -3268,6 +3360,7 @@ const paletteRow = form.palette.length
 
     renderPhotoPane();
     renderCoaList();
+    attachDictation('btn-dictate', 'f-notes');
   }
 
   function renderCoaList() {

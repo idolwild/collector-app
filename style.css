@@ -1849,6 +1849,53 @@ input[type='search']::-webkit-search-cancel-button {
   justify-content: flex-end;
 }
 
+/* ---------- Dictation ---------- */
+.dict-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.dict-row textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+.mic-btn {
+  flex: none;
+  width: 48px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  font-family: inherit;
+}
+
+.mic-btn .bi {
+  margin-right: 0;
+}
+
+.mic-btn.recording {
+  color: #fff;
+  border-color: #e0685c;
+  background: rgba(224, 104, 92, 0.35);
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(224, 104, 92, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(224, 104, 92, 0); }
+}
+
+[data-theme='light'] .mic-btn {
+  border-color: rgba(20, 22, 28, 0.18);
+  background: rgba(255, 255, 255, 0.9);
+}
+
 .form-section label {
   display: flex;
   flex-direction: column;
