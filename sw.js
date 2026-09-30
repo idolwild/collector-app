@@ -1,4 +1,7 @@
-const CACHE = 'collector-shell-v44';
+// Bump this on every deploy. The fetch handler is cache-first, so a client only
+// gets new code when a new worker installs — if the name doesn't change, the
+// phone keeps serving the previous build from cache indefinitely.
+const CACHE = 'collector-shell-v46';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

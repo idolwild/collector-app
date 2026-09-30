@@ -305,7 +305,7 @@
 
   const root = document.getElementById('root');
 
-  const APP_VERSION = 'v43';
+  const APP_VERSION = 'v46';
 
   function imgs(a) {
     const list = Array.isArray(a.images) && a.images.length ? a.images : [a.image];
@@ -319,6 +319,8 @@
 
   const MAX_VIDEO_SEC = 30;
   const MAX_PUBLISH_VIDEO_BYTES = 50 * 1024 * 1024;
+  const THUMB_DIM = 480; // gallery cards are ~200px; 480 keeps retina cards crisp
+  const THUMB_Q = 1; // bump to force a one-time rebuild of every photo thumbnail
 
   function isVideo(b) {
     return b instanceof Blob && typeof b.type === 'string' && b.type.startsWith('video/');
@@ -360,6 +362,21 @@
       postersOf(a).find((b) => b instanceof Blob && b.size) ||
       null
     );
+  }
+
+  // Card-sized JPEG for photos. Stored photos are up to 2000px (~1 MB each), so
+  // a grid of them asks the browser to decode ~12 MB of pixels per image; Safari
+  // gives up on the surplus and the cards come up blank. One small thumbnail per
+  // slot keeps the gallery light. Returns null for images already small enough —
+  // those are cheap to draw as-is and duplicating them would waste storage.
+  async function makeThumb(blob) {
+    if (!(blob instanceof Blob) || !blob.size || isVideo(blob)) return null;
+    try {
+      const t = await ColorUtil.resizeImage(blob, THUMB_DIM, 0.8);
+      return t && t.size && t !== blob ? t : null;
+    } catch {
+      return null;
+    }
   }
 
   // Duration + a JPEG poster frame (~10% in, avoids black first frames).
@@ -586,13 +603,25 @@
     });
   }
 
+  // Chunked base64 decode: a single atob() over a whole video-sized string
+  // (tens of MB) blows up on iPhones — decode in 32KB slices instead.
+  // Throws on corrupt input; callers decide whether to skip or abort.
   function dataURLToBlob(dataUrl) {
-    const [meta, data] = dataUrl.split(',');
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
+      throw new Error('bad data URL');
+    }
+    const comma = dataUrl.indexOf(',');
+    const meta = dataUrl.slice(0, comma);
+    const data = dataUrl.slice(comma + 1);
     const mime = (meta.match(/data:(.*?);/) || [])[1] || 'image/jpeg';
-    const bin = atob(data);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return new Blob([bytes], { type: mime });
+    const slice = 32768; // multiple of 4 keeps base64 quantum intact
+    const out = new Uint8Array(data.length);
+    let offset = 0;
+    for (let i = 0; i < data.length; i += slice) {
+      const bin = atob(data.slice(i, i + slice));
+      for (let j = 0; j < bin.length; j++) out[offset++] = bin.charCodeAt(j);
+    }
+    return new Blob([out.subarray(0, offset)], { type: mime });
   }
 
   function download(filename, blob) {
@@ -1790,33 +1819,54 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
   }
 
   // Older video clips saved before posters/durations existed get them now
-  // (grandfathered in regardless of length — the 30s cap applies to new adds).
+  // (grandfathered in regardless of length — the 30s cap applies to new adds),
+  // and photos saved before thumbnails existed get a card-sized one.
   async function backfillMedia(rows) {
+    let changed = false;
     for (const a of rows) {
       const media = imgs(a);
-      if (!media.some(isVideo)) continue;
       const posters = postersOf(a).slice();
       const durations = durationsOf(a).slice();
       while (posters.length < media.length) posters.push(null);
       while (durations.length < media.length) durations.push(null);
       let dirty = posters.length !== postersOf(a).length || durations.length !== durationsOf(a).length;
-      const upgrade = a.posterQ !== 2; // regenerate old low-res posters once
+      const vUpgrade = a.posterQ !== 2; // regenerate old low-res video posters once
+      const tUpgrade = a.thumbQ !== THUMB_Q; // photos without a thumbnail, once
+      if (!media.length || (!media.some(isVideo) && !tUpgrade && !dirty)) continue;
       for (let i = 0; i < media.length; i++) {
-        if (!isVideo(media[i]) || (posters[i] && durations[i] != null && !upgrade)) continue;
-        try {
-          const p = await probeVideo(media[i]);
-          posters[i] = p.poster;
-          durations[i] = p.duration;
-          dirty = true;
-        } catch { /* stays playable, just without a poster */ }
+        const b = media[i];
+        if (!(b instanceof Blob) || !b.size) continue;
+        if (isVideo(b)) {
+          if (posters[i] && durations[i] != null && !vUpgrade) continue;
+          try {
+            const p = await probeVideo(b);
+            posters[i] = p.poster;
+            durations[i] = p.duration;
+            dirty = true;
+          } catch { /* stays playable, just without a poster */ }
+        } else {
+          if (posters[i] && !tUpgrade) continue;
+          const t = await makeThumb(b);
+          if (t) {
+            posters[i] = t;
+            dirty = true;
+          }
+        }
       }
-      if (dirty) {
+      // Persist whenever anything changed, or when a version stamp is stale —
+      // otherwise the stamp is retried on every single load.
+      if (dirty || tUpgrade || vUpgrade) {
         a.posters = posters;
         a.durations = durations;
         a.posterQ = 2;
-        try { await CollectorDB.updateArt(a.id, { posters, durations, posterQ: 2 }); } catch {}
+        a.thumbQ = THUMB_Q;
+        changed = true;
+        try {
+          await CollectorDB.updateArt(a.id, { posters, durations, posterQ: 2, thumbQ: THUMB_Q });
+        } catch {}
       }
     }
+    return changed;
   }
 
   /* ---------------- gallery ---------------- */
@@ -1894,6 +1944,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
         ${state.selecting ? '' : `
         <div class="backup-row">
           <span class="backup-label">Backup · ${APP_VERSION}</span>
+          <span class="backup-space" id="backup-space" title="Space this collection occupies"></span>
           <button class="ghost small" id="btn-export" type="button">↓ Export</button>
           <button class="ghost small" id="btn-import" type="button">↑ Import</button>
           <span class="backup-sep"></span>
@@ -2441,6 +2492,16 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
       el.querySelector('#import-file').click()
     );
     el.querySelector('#import-file')?.addEventListener('change', importBackup);
+
+    // Filled after paint: the estimate is async and not worth blocking render on.
+    storageSummary().then((s) => {
+      const box = el.querySelector('#backup-space');
+      if (!box) return;
+      box.textContent = s ? `${fmtBytes(s.usage)} / ${fmtBytes(s.quota)}` : '';
+      // Amber when there is less than a quarter left — the point where saves
+      // and imports start failing without warning.
+      box.classList.toggle('tight', !!s && s.free < s.quota * 0.25);
+    });
   }
 
   /* ---------------- form ---------------- */
@@ -2526,7 +2587,9 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     form.durations = images.map((_, i) => durations[i] ?? null);
     form.vurls = images.map((b, i) => {
       const p = form.posters[i];
-      if (p && p.size) return URL.createObjectURL(p);
+      // Video slots preview their poster frame; photo slots always show the
+      // real image, so the thumbnail never hides detail in the editor.
+      if (p && p.size && isVideo(b)) return URL.createObjectURL(p);
       return b && b.size ? URL.createObjectURL(b) : undefined;
     });
     form.murls = images.map((b) => (isVideo(b) && b.size ? URL.createObjectURL(b) : null));
@@ -3053,15 +3116,20 @@ const paletteRow = form.palette.length
       const rec = state.artworks.find((a) => a.id === art.id);
       if (!rec) { cleanup(); return; }
       const images = [...imgs(rec), snapBlob];
+      const thumb = await makeThumb(snapBlob);
       try {
         await CollectorDB.updateArt(art.id, {
           images, image: images[0],
-          posters: [...postersOf(rec), null],
+          posters: [...postersOf(rec), thumb],
           durations: [...durationsOf(rec), null],
+          thumbQ: THUMB_Q,
         });
         state.notice = 'Wall preview saved to this piece.';
-      } catch {
-        state.notice = 'Could not save the still. Storage may be full.';
+      } catch (e) {
+        console.error('wall still save failed:', e);
+        state.notice = isQuotaError(e)
+          ? 'Storage is full — the still was not saved.'
+          : `Could not save the still: ${describeErr(e)}`;
       }
       cleanup();
       await reload();
@@ -3112,54 +3180,68 @@ const paletteRow = form.palette.length
     );
     if (!list.length) return;
     const shell = document.getElementById('form-sheet');
+    const pane = shell && shell.querySelector('#photo-pane');
+    if (!pane) return;
     const analyzing = document.createElement('div');
     analyzing.className = 'analyzing';
     analyzing.textContent = 'Adding media…';
-    shell.querySelector('#photo-pane').appendChild(analyzing);
+    pane.appendChild(analyzing);
 
     const firstBefore = form.images.length === 0;
     const rejected = [];
-    for (const f of list) {
-      if (f.type.startsWith('video/')) {
-        analyzing.textContent = 'Checking video…';
-        let probe;
-        try {
-          probe = await probeVideo(f);
-        } catch {
-          rejected.push(`${f.name || 'Video'}: could not be read. Try a shorter clip, or lower the camera resolution.`);
-          continue;
-        }
-        if (probe.duration > MAX_VIDEO_SEC + 0.5) {
-          rejected.push(`${f.name || 'Video'} is ${fmtDur(probe.duration)} — keep clips to 30 seconds or less.`);
-          continue;
-        }
-        form.images.push(f);
-        form.posters.push(probe.poster);
-        form.durations.push(probe.duration);
-        form.vurls.push(probe.poster ? URL.createObjectURL(probe.poster) : undefined);
-        form.murls.push(URL.createObjectURL(f));
-      } else {
-        analyzing.textContent = 'Analyzing photos…';
-        const resized = await ColorUtil.resizeImage(f, 2000, 0.9);
-        form.images.push(resized);
-        form.posters.push(null);
-        form.durations.push(null);
-        form.vurls.push(URL.createObjectURL(resized));
-        form.murls.push(null);
-        if (firstBefore && !form.titleTouched) {
-          const rawTitle = (f.name || '').replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
-          if (rawTitle) {
-            const t = shell.querySelector('#f-title');
-            if (t) t.value = rawTitle;
-            form.titleTouched = true;
+    // Every throw in here used to strand the "Adding media…" label forever and
+    // leave the photo picker looking broken, so the loop is fenced and the
+    // parallel arrays are pushed only after every fallible call has succeeded.
+    try {
+      for (const f of list) {
+        if (f.type.startsWith('video/')) {
+          analyzing.textContent = 'Checking video…';
+          let probe;
+          try {
+            probe = await probeVideo(f);
+          } catch {
+            rejected.push(`${f.name || 'Video'}: could not be read. Try a shorter clip, or lower the camera resolution.`);
+            continue;
+          }
+          if (probe.duration > MAX_VIDEO_SEC + 0.5) {
+            rejected.push(`${f.name || 'Video'} is ${fmtDur(probe.duration)} — keep clips to 30 seconds or less.`);
+            continue;
+          }
+          const posterUrl = probe.poster ? URL.createObjectURL(probe.poster) : undefined;
+          const mediaUrl = URL.createObjectURL(f);
+          form.images.push(f);
+          form.posters.push(probe.poster);
+          form.durations.push(probe.duration);
+          form.vurls.push(posterUrl);
+          form.murls.push(mediaUrl);
+        } else {
+          analyzing.textContent = 'Analyzing photos…';
+          const resized = await ColorUtil.resizeImage(f, 2000, 0.9);
+          const thumb = await makeThumb(resized);
+          const url = URL.createObjectURL(resized);
+          form.images.push(resized);
+          form.posters.push(thumb);
+          form.durations.push(null);
+          form.vurls.push(url);
+          form.murls.push(null);
+          if (firstBefore && !form.titleTouched) {
+            const rawTitle = (f.name || '').replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
+            if (rawTitle) {
+              const t = shell.querySelector('#f-title');
+              if (t) { t.value = rawTitle; form.titleTouched = true; }
+            }
           }
         }
       }
-    }
 
-    const src = paletteSource(form);
-    form.palette = src ? await ColorUtil.extractPalette(src, 4) : [];
-    analyzing.remove();
+      const src = paletteSource(form);
+      form.palette = src ? await ColorUtil.extractPalette(src, 4) : [];
+    } catch (e) {
+      console.error('attaching media failed:', e);
+      rejected.push(`That file could not be added: ${describeErr(e)}`);
+    } finally {
+      analyzing.remove();
+    }
     if (rejected.length) alert(rejected.join('\n'));
     renderPhotoPane();
     syncFormPalette();
@@ -3447,6 +3529,7 @@ const paletteRow = form.palette.length
       posters: form.posters.slice(),
       durations: form.durations.slice(),
       posterQ: 2, // poster quality version — backfill upgrades older ones
+      thumbQ: THUMB_Q, // photo thumbnails — bumped to force a one-time rebuild
       setId: state.formSetId || undefined,
       createdAt: isNew ? now : undefined,
       updatedAt: now,
@@ -3468,14 +3551,28 @@ const paletteRow = form.palette.length
       } else {
         await CollectorDB.addArt(art);
       }
+    } catch (e) {
+      // The write itself failed. Report the actual error plus measured usage —
+      // the old copy said "storage may be full" for every possible failure.
+      disable(false);
+      const store = await storageSummary();
+      errBox.hidden = false;
+      errBox.textContent = isQuotaError(e)
+        ? `Storage is full — nothing was saved. Export a backup, free some space, then try again.${storageLine(store)}`
+        : `Could not save: ${describeErr(e)}.${storageLine(store)}`;
+      console.error('save failed:', e);
+      return;
+    }
+    // The record is committed; a failure from here on is only a redraw problem.
+    try {
       resetForm();
       state.formSetId = null;
       restoreAfter();
       await reload();
     } catch (e) {
-      disable(false);
-      errBox.hidden = false;
-      errBox.textContent = 'Could not save. Storage may be full.';
+      console.error('view refresh failed after save:', e);
+      state.notice = 'Saved, but the view could not refresh — reload the page.';
+      render();
     }
   }
 
@@ -3861,6 +3958,58 @@ const paletteRow = form.palette.length
     }
   }
 
+  /* ---------------- storage diagnostics ---------------- */
+
+  function fmtBytes(n) {
+    if (!Number.isFinite(n)) return '';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let v = n;
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) {
+      v /= 1024;
+      i++;
+    }
+    return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+  }
+
+  // Real numbers behind any "storage is full" claim: what this origin uses and
+  // how much it is allowed. Null when the browser can't measure (or the number
+  // would be meaningless), so callers fall back to plain prose.
+  async function storageSummary() {
+    try {
+      const est =
+        navigator.storage && typeof navigator.storage.estimate === 'function'
+          ? await navigator.storage.estimate()
+          : null;
+      if (
+        est &&
+        Number.isFinite(est.usage) &&
+        Number.isFinite(est.quota) &&
+        est.quota > 0
+      ) {
+        return { usage: est.usage, quota: est.quota, free: Math.max(0, est.quota - est.usage) };
+      }
+    } catch {
+      /* estimate() is best-effort */
+    }
+    return null;
+  }
+
+  function isQuotaError(e) {
+    return !!(e && (e.name === 'QuotaExceededError' || e.code === 22));
+  }
+
+  // Errors get reported verbatim — guessing the cause hides the real one.
+  function describeErr(e) {
+    if (!e) return 'unknown error';
+    const name = e.name && e.name !== 'Error' ? `${e.name}: ` : '';
+    return name + (e.message || String(e));
+  }
+
+  function storageLine(store) {
+    return store ? ` Storage: ${fmtBytes(store.usage)} of ${fmtBytes(store.quota)} used.` : '';
+  }
+
   /* ---------------- export / import ---------------- */
 
   async function exportBackup() {
@@ -3879,7 +4028,8 @@ const paletteRow = form.palette.length
         );
         return {
           ...rest,
-          imagesDataUrl: dataUrls.filter(Boolean),
+          // nulls preserved so posters/durations stay index-aligned
+          imagesDataUrl: dataUrls,
           imageDataUrl: dataUrls[0] || null,
           postersDataUrl: posterUrls,
           durations: durationsOf(a),
@@ -3895,13 +4045,60 @@ const paletteRow = form.palette.length
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    try {
-      const data = JSON.parse(await file.text());
-      const list = Array.isArray(data) ? data : data.artworks;
-      if (!Array.isArray(list)) throw new Error('bad file');
 
-      const setIdMap = {};
-      let setCount = 0;
+    // Parsing, shape and storage failures are three different problems — report
+    // each one for what it is instead of a single "could not read that file".
+    let data;
+    try {
+      data = JSON.parse(await file.text());
+    } catch {
+      alert('Could not read that file. It is not valid JSON.');
+      return;
+    }
+    const list = Array.isArray(data) ? data : data && data.artworks;
+    if (!Array.isArray(list)) {
+      alert('Could not read that file. Expected a Collector backup JSON.');
+      return;
+    }
+
+    // A backup is base64-heavy: the JSON is ~1.37x the image bytes it carries,
+    // so the database grows by roughly 0.73x the size of the file itself.
+    let store = await storageSummary();
+    const growth = file.size * 0.73;
+    if (store && store.free < growth) {
+      const go = confirm(
+        `Storage looks full — ${fmtBytes(store.usage)} of ${fmtBytes(store.quota)} used, ` +
+          `and this backup needs about ${fmtBytes(growth)} more.\n\n` +
+          `Importing will likely stop partway through. Continue anyway?`
+      );
+      if (!go) return;
+    }
+
+    const setIdMap = {};
+    const newSetIds = [];
+    const newArtIds = [];
+    let setCount = 0;
+    let count = 0;
+    let skippedFiles = 0;
+    let skippedRecords = 0;
+
+    // Undo everything this run created, so a failed import can be retried
+    // cleanly instead of leaving half a backup behind to duplicate the next one.
+    const rollBack = async () => {
+      for (const id of newArtIds) {
+        try {
+          await CollectorDB.deleteArt(id);
+        } catch {}
+      }
+      for (const id of newSetIds) {
+        try {
+          await CollectorDB.deleteSet(id);
+        } catch {}
+      }
+      await reload();
+    };
+
+    try {
       if (!Array.isArray(data) && Array.isArray(data.sets)) {
         for (const s of data.sets) {
           if (!s || !s.name) continue;
@@ -3909,48 +4106,99 @@ const paletteRow = form.palette.length
             name: s.name,
             createdAt: s.createdAt || Date.now(),
           });
+          newSetIds.push(newId);
           setIdMap[s.id] = newId;
           setCount++;
         }
       }
 
-      let count = 0;
       for (const item of list) {
         const sources = Array.isArray(item.imagesDataUrl) && item.imagesDataUrl.length
           ? item.imagesDataUrl
           : item.imageDataUrl
             ? [item.imageDataUrl]
             : [];
-        const images = sources.map(dataURLToBlob).filter((b) => b.size);
+        // Decode each file on its own: one corrupt/unreadable entry skips
+        // that file instead of killing the whole import. kept[] remembers
+        // original indexes so posters/durations stay aligned.
+        const images = [];
+        const kept = [];
+        sources.forEach((s, i) => {
+          if (!s) return;
+          try {
+            const b = dataURLToBlob(s);
+            if (b.size) { images.push(b); kept.push(i); }
+            else skippedFiles++;
+          } catch { skippedFiles++; }
+        });
         if (!images.length) continue;
         const srcPosters = Array.isArray(item.postersDataUrl) ? item.postersDataUrl : [];
         const srcDurs = Array.isArray(item.durations) ? item.durations : [];
-        const posters = images.map((_, i) => {
-          try { return srcPosters[i] ? dataURLToBlob(srcPosters[i]) : null; } catch { return null; }
+        const posters = images.map((_, k) => {
+          try { return srcPosters[kept[k]] ? dataURLToBlob(srcPosters[kept[k]]) : null; } catch { return null; }
         });
-        const durations = images.map((_, i) => (typeof srcDurs[i] === 'number' ? srcDurs[i] : null));
+        const durations = images.map((_, k) => (typeof srcDurs[kept[k]] === 'number' ? srcDurs[kept[k]] : null));
         const coa = (Array.isArray(item.coaDataUrl) ? item.coaDataUrl : []).map((c) => {
           try { return { blob: dataURLToBlob(c.dataUrl), name: c.name || 'Document' }; } catch { return null; }
         }).filter((c) => c && c.blob.size);
         const { imagesDataUrl, imageDataUrl, postersDataUrl, durations: _d, coaDataUrl, id, ...rest } = item;
-        await CollectorDB.addArt({
-          ...rest,
-          images,
-          image: images[0],
-          posters,
-          durations,
-          coa,
-          setId: setIdMap[item.setId] || undefined,
-          createdAt: item.createdAt || Date.now(),
-        });
+        let newId;
+        try {
+          newId = await CollectorDB.addArt({
+            ...rest,
+            images,
+            image: images[0],
+            posters,
+            durations,
+            coa,
+            setId: setIdMap[item.setId] || undefined,
+            createdAt: item.createdAt || Date.now(),
+          });
+        } catch (err) {
+          if (isQuotaError(err)) {
+            store = (await storageSummary()) || store;
+            if (newArtIds.length || newSetIds.length) {
+              const clean = confirm(
+                `Import stopped — storage is full (${newArtIds.length} of ${list.length} artworks made it in).` +
+                  `${storageLine(store)}\n\nRemove what did import, so you can free space and retry later?`
+              );
+              if (clean) await rollBack();
+              else await reload();
+            } else {
+              alert(`Storage is full — nothing could be imported.${storageLine(store)}`);
+              await reload();
+            }
+            return;
+          }
+          skippedRecords++;
+          console.error('import skipped a record:', err);
+          continue;
+        }
+        newArtIds.push(newId);
         count++;
       }
-      const extra = setCount ? ` and ${setCount} set${setCount === 1 ? '' : 's'}` : '';
-      alert(`Imported ${count} artwork${count === 1 ? '' : 's'}${extra}.`);
-      await reload();
-    } catch {
-      alert('Could not read that file. Expected a Collector backup JSON.');
+    } catch (err) {
+      console.error('import failed:', err);
+      store = (await storageSummary()) || store;
+      if (newArtIds.length || newSetIds.length) {
+        const clean = confirm(
+          `Import failed: ${describeErr(err)}.${storageLine(store)}\n\n` +
+            `Remove the ${newArtIds.length} artwork${newArtIds.length === 1 ? '' : 's'} added before it failed?`
+        );
+        if (clean) await rollBack();
+        else await reload();
+      } else {
+        await reload();
+      }
+      return;
     }
+
+    const extra = setCount ? ` and ${setCount} set${setCount === 1 ? '' : 's'}` : '';
+    const skipped = skippedFiles || skippedRecords
+      ? ` (${skippedFiles} unreadable file${skippedFiles === 1 ? '' : 's'} and ${skippedRecords} artwork${skippedRecords === 1 ? '' : 's'} skipped)`
+      : '';
+    alert(`Imported ${count} artwork${count === 1 ? '' : 's'}${extra}${skipped}.`);
+    await reload();
   }
 
   /* ---------------- filters ---------------- */
@@ -3997,7 +4245,6 @@ const paletteRow = form.palette.length
     const purged = await purgeShells(rows);
     await repairPalettes(rows);
     rows = await CollectorDB.getAll();
-    await backfillMedia(rows);
     if (purged) {
       state.notice = `Removed ${purged} damaged record${purged === 1 ? '' : 's'} — photos erased by an earlier bug can't be restored. Anything you add from now on is saved safely.`;
     }
@@ -4011,6 +4258,9 @@ const paletteRow = form.palette.length
     }
     state.sets = (sets || []).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     render();
+    // Thumbnailing is the slow part of an upgrade, so it runs after the first
+    // paint — an older collection shouldn't sit on a blank screen while it works.
+    if (await backfillMedia(rows)) await reload();
   }
 
   init();
