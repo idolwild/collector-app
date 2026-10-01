@@ -308,7 +308,7 @@
 
   const root = document.getElementById('root');
 
-  const APP_VERSION = 'v50';
+  const APP_VERSION = 'v51';
 
   function imgs(a) {
     const list = Array.isArray(a.images) && a.images.length ? a.images : [a.image];
@@ -2315,25 +2315,44 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
         <g class="ring ring-b"><circle cx="100" cy="82" r="66" /></g>
 
         <g class="folder">
-          <path class="fold fold-back" d="M38 54 v50 a10 10 0 0 0 10 10 h104 a10 10 0 0 0 10 -10 v-6 a8 8 0 0 0 -8 -8 H128 L116 40 H48 a10 10 0 0 0 -10 10 Z" />
-          <g class="paper">
-            <rect class="paper-bg" x="64" y="50" width="72" height="48" rx="5" />
-            <g class="paper-art">
-              <rect class="frame" x="87" y="55" width="26" height="38" rx="3" />
-              <path class="mtn" d="M89 66 L94 61 L99 65 L105 60 L111 66" />
-              <path class="line" d="M89 67 H111" />
-              <ellipse class="fig" cx="100" cy="75" rx="4.8" ry="5.6" />
-              <path class="fig" d="M95.6 72.5 C92.8 76 92.6 82 94 86.5" />
-              <path class="fig" d="M104.4 72.5 C107.2 76 107.4 82 106 86.5" />
-              <path class="fig" d="M90 93 C90 87.5 93.5 83.5 97.5 82 C98.8 84.6 101.2 84.6 102.5 82 C106.5 83.5 110 87.5 110 93" />
-              <path class="fig" d="M96.6 92.6 C98.5 89.6 101.5 89.6 103.4 92.6" />
+          <path class="fold fold-back" d="M40 52 V108 a8 8 0 0 0 8 8 h104 a8 8 0 0 0 8 -8 V60 a8 8 0 0 0 -8 -8 h-46 l-10 -12 h-48 a8 8 0 0 0 -8 8 Z" />
+
+          <g class="portrait">
+            <g class="portrait-bounce">
+              <rect class="plaque" x="71" y="22" width="58" height="74" rx="7" />
+              <path class="orn" d="M78 25 q 5.5 -4 11 0 t 11 0 t 11 0 t 11 0 a 8 8 0 0 1 4 6 q 4 7 0 14 t 0 14 t 0 14 t 0 14 a 8 8 0 0 1 -4 6 q -5.5 4 -11 0 t -11 0 t -11 0 t -11 0 a 8 8 0 0 1 -4 -6 q -4 -7 0 -14 t 0 -14 t 0 -14 t 0 -14 a 8 8 0 0 1 4 -6 Z" />
+              <rect class="frame" x="80" y="31" width="40" height="53" rx="2" />
+              <g class="figure">
+                <path class="fig-hair" d="M100 37.2 C93.4 37.2 89.6 43 88.8 50.6 C88 58.2 89.4 65.4 91.8 71" />
+                <path class="fig-hair" d="M100 37.2 C106.6 37.2 110.4 43 111.2 50.6 C112 58.2 110.6 65.4 108.2 71" />
+                <ellipse class="fig-face" cx="100" cy="48" rx="6.4" ry="7.6" />
+                <path class="fig-body" d="M82 84 C83 72.5 88.5 63.5 97 59.6 C99 62 101 62 103 59.6 C111.5 63.5 117 72.5 118 84" />
+                <path class="fig-body" d="M103.4 62.5 C108 67 112 73.5 113.5 83" />
+                <path class="fig-body" d="M97.4 55.4 L97 61.4" />
+                <path class="fig-body" d="M102.6 55.4 L103 61.4" />
+                <path class="fig-hands" d="M85 82.5 C88.5 77.4 93.5 74 99 73.4" />
+                <path class="fig-hands" d="M99 73.4 C104.4 73 108 75.4 108.2 78.8 C108.4 82.2 104.6 84.4 100 83.6" />
+                <path class="fig-hands" d="M102.6 74.4 L106.6 76.6" />
+                <path class="fig-hands" d="M103.6 77 L107.6 79" />
+                <path class="fig-hands" d="M103.8 79.6 L107.4 81.4" />
+                <g class="fig-feat">
+                  <path d="M96.3 47.4 q1.7 -2.2 3.4 0 q-1.7 2.2 -3.4 0 Z" />
+                  <path d="M100.3 47.4 q1.7 -2.2 3.4 0 q-1.7 2.2 -3.4 0 Z" />
+                  <circle class="fig-dot" cx="98" cy="47.4" r="0.55" />
+                  <circle class="fig-dot" cx="102" cy="47.4" r="0.55" />
+                  <path d="M100 50.2 L99.5 52.4 C100 53 100.7 52.9 101 52.4" />
+                  <path d="M98.4 53.6 C99.3 54.7 100.7 54.7 101.6 53.6" />
+                </g>
+              </g>
             </g>
           </g>
-          <path class="fold fold-front" d="M38 82 v22 a10 10 0 0 0 10 10 h104 a10 10 0 0 0 10 -10 v-22" />
+
+          <path class="fold fold-front" d="M52 88 h96 a10 10 0 0 1 10 10 v10 a10 10 0 0 1 -10 10 h-96 a10 10 0 0 1 -10 -10 v-10 a10 10 0 0 1 10 -10 Z" />
         </g>
 
-        <g class="spark p1"><path d="M158 32 v16 M150 40 h16" /></g>
-        <g class="spark p2"><path d="M34 118 v10 M29 123 h10" /></g>
+        <g class="spark p1"><path d="M64 30 v13 M57.5 36.5 h13" /></g>
+        <g class="spark p2"><path d="M137 48 v12 M131 54 h12" /></g>
+        <g class="spark p3"><path d="M62 91 v10 M57 96 h10" /></g>
         <g class="dot dot-a"><circle cx="170" cy="70" r="2.2" /></g>
         <g class="dot dot-b"><circle cx="28" cy="44" r="1.8" /></g>
       </svg>

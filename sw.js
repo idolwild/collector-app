@@ -1,5 +1,5 @@
 // Bump this on every deploy.
-const CACHE = 'collector-shell-v50';
+const CACHE = 'collector-shell-v51';
 
 // The app shell is revalidated against the network on every reload (`no-cache`
 // means the server is asked, not the local copy). Serving it from cache first

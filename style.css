@@ -1063,8 +1063,8 @@ input[type='search']::-webkit-search-cancel-button {
 
 /* --- Animated intro art --- */
 .empty-art {
-  width: 180px;
-  height: 135px;
+  width: 200px;
+  height: 150px;
   animation: floaty 5s ease-in-out infinite;
 }
 
@@ -1078,66 +1078,108 @@ input[type='search']::-webkit-search-cancel-button {
   stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
-  fill: none;
+  fill: var(--bg);
+  fill-opacity: 0;
   stroke-dasharray: 460;
   stroke-dashoffset: 460;
-  animation: draw 1.1s ease-out 0.1s forwards;
+  animation:
+    draw 1.1s ease-out 0.1s forwards,
+    ink-in 0.4s ease 0.95s forwards;
 }
 
-.empty-art .paper-bg {
-  fill: var(--bg-elev2);
-  stroke: var(--border);
-  stroke-width: 1.2;
+/* Portrait: draws in the air, then is filed into the folder. */
+.empty-art .portrait {
+  transform-box: view-box;
+  transform-origin: 100px 59px;
+  transform: translateY(-16px) rotate(-9deg);
+  animation: portrait-drop 0.75s ease-in 2.2s both;
 }
 
-.empty-art .paper {
+.empty-art .portrait-bounce {
+  transform-box: view-box;
+  transform-origin: 100px 88px;
+  animation: land-pop 0.45s ease-out 2.9s;
+}
+
+.empty-art .plaque {
+  fill: var(--bg);
   opacity: 0;
-  transform: translateY(-34px);
-  animation: paper-in 0.55s cubic-bezier(0.22, 1.25, 0.36, 1) 1s forwards;
+  animation: art-in 0.3s ease 0.55s forwards;
 }
 
-.empty-art .paper-art {
-  opacity: 0;
-  animation: art-in 0.45s ease 1.45s forwards;
+.empty-art .orn {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  stroke-dasharray: 270;
+  stroke-dashoffset: 290;
+  animation: draw 0.6s ease-out 0.75s forwards;
 }
 
 .empty-art .frame {
   stroke: var(--text-dim);
-  stroke-width: 1.1;
-  stroke-dasharray: 130;
-  stroke-dashoffset: 130;
-  animation: draw 0.5s ease-out 1.5s forwards;
+  stroke-width: 1.4;
+  stroke-dasharray: 195;
+  stroke-dashoffset: 200;
+  animation: draw 0.45s ease-out 1s forwards;
 }
 
-.empty-art .mtn {
-  stroke: #35657f;
+.empty-art .fig-face {
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  fill: none;
+  stroke-dasharray: 50;
+  stroke-dashoffset: 50;
+  animation: draw 0.45s ease-out 1.25s forwards;
+}
+
+.empty-art .fig-hair {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  fill: none;
+  stroke-dasharray: 48;
+  stroke-dashoffset: 45;
+  animation: draw 0.5s ease-out 1.4s forwards;
+}
+
+.empty-art .fig-body {
+  stroke: var(--accent);
   stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
   fill: none;
-  stroke-dasharray: 34;
-  stroke-dashoffset: 34;
-  animation: draw 0.55s ease-out 1.65s forwards;
+  stroke-dasharray: 95;
+  stroke-dashoffset: 95;
+  animation: draw 0.55s ease-out 1.55s forwards;
 }
 
-.empty-art .line {
-  stroke: #51365c;
-  stroke-width: 1.5;
+.empty-art .fig-dot {
+  fill: var(--accent);
+  stroke: none;
+}
+
+.empty-art .fig-feat {
+  stroke: var(--accent);
+  stroke-width: 0.9;
   stroke-linecap: round;
-  stroke-dasharray: 24;
-  stroke-dashoffset: 24;
-  animation: draw 0.4s ease-out 1.9s forwards;
+  stroke-linejoin: round;
+  fill: none;
+  opacity: 0;
+  animation: art-in 0.3s ease 1.8s forwards;
 }
 
-.empty-art .fig {
+.empty-art .fig-hands {
   stroke: var(--accent);
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
   fill: none;
-  stroke-dasharray: 46;
-  stroke-dashoffset: 46;
-  animation: draw 0.7s ease-out 2.1s forwards;
+  stroke-dasharray: 40;
+  stroke-dashoffset: 30;
+  animation: draw 0.35s ease-out 1.9s forwards;
 }
 
 .empty-art .spark path {
@@ -1147,12 +1189,12 @@ input[type='search']::-webkit-search-cancel-button {
   opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
-  animation: spark-pop 0.6s ease 2.2s forwards;
+  animation: spark-pop 0.6s ease 3s forwards;
 }
 
-.empty-art .p2 path {
-  animation-delay: 2.4s;
-}
+.empty-art .p2 path { animation-delay: 3.1s; }
+
+.empty-art .p3 path { animation-delay: 3.2s; }
 
 .empty-art .dot circle {
   fill: var(--text-dim);
@@ -1193,12 +1235,25 @@ input[type='search']::-webkit-search-cancel-button {
   to { stroke-dashoffset: 0; }
 }
 
-@keyframes paper-in {
-  to { transform: translateY(0); opacity: 1; }
+@keyframes portrait-drop {
+  0% { transform: translateY(-16px) rotate(-9deg); }
+  58% { transform: translateY(5px) rotate(4deg); }
+  100% { transform: translateY(0) rotate(0deg); }
+}
+
+@keyframes land-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.05, 0.955); }
+  70% { transform: scale(0.985, 1.02); }
+  100% { transform: scale(1); }
 }
 
 @keyframes art-in {
   to { opacity: 1; }
+}
+
+@keyframes ink-in {
+  to { fill-opacity: 1; }
 }
 
 @keyframes spark-pop {
