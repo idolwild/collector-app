@@ -308,7 +308,7 @@
 
   const root = document.getElementById('root');
 
-  const APP_VERSION = 'v49';
+  const APP_VERSION = 'v50';
 
   function imgs(a) {
     const list = Array.isArray(a.images) && a.images.length ? a.images : [a.image];
@@ -2319,10 +2319,14 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
           <g class="paper">
             <rect class="paper-bg" x="64" y="50" width="72" height="48" rx="5" />
             <g class="paper-art">
-              <rect class="frame" x="72" y="58" width="56" height="30" rx="3" />
-              <circle class="sun" cx="90" cy="71" r="5" />
-              <path class="mtn" d="M74 86 L88 68 L99 81 L108 72 L122 84" />
-              <path class="line" d="M74 91 H122" />
+              <rect class="frame" x="87" y="55" width="26" height="38" rx="3" />
+              <path class="mtn" d="M89 66 L94 61 L99 65 L105 60 L111 66" />
+              <path class="line" d="M89 67 H111" />
+              <ellipse class="fig" cx="100" cy="75" rx="4.8" ry="5.6" />
+              <path class="fig" d="M95.6 72.5 C92.8 76 92.6 82 94 86.5" />
+              <path class="fig" d="M104.4 72.5 C107.2 76 107.4 82 106 86.5" />
+              <path class="fig" d="M90 93 C90 87.5 93.5 83.5 97.5 82 C98.8 84.6 101.2 84.6 102.5 82 C106.5 83.5 110 87.5 110 93" />
+              <path class="fig" d="M96.6 92.6 C98.5 89.6 101.5 89.6 103.4 92.6" />
             </g>
           </g>
           <path class="fold fold-front" d="M38 82 v22 a10 10 0 0 0 10 10 h104 a10 10 0 0 0 10 -10 v-22" />
