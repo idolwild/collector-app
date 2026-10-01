@@ -1,15 +1,33 @@
-// Bump this on every deploy. The fetch handler is cache-first, so a client only
-// gets new code when a new worker installs — if the name doesn't change, the
-// phone keeps serving the previous build from cache indefinitely.
-const CACHE = 'collector-shell-v46';
+// Bump this on every deploy.
+const CACHE = 'collector-shell-v49';
+
+// The app shell is revalidated against the network on every reload (`no-cache`
+// means the server is asked, not the local copy). Serving it from cache first
+// is what hid a fix — the client kept the previous build until this name
+// changed, so a deploy could look like it did nothing.
+const SHELL = ['./', './index.html', './app.js', './db.js', './color.js', './style.css', './icon.svg', './logo.svg', './manifest.webmanifest'];
+const SHELL_PATHS = new Set(SHELL.map((p) => new URL(p, self.location.href).pathname));
+SHELL_PATHS.add(new URL('./', self.location.href).pathname);
+
+function isShell(request) {
+  if (request.mode === 'navigate') return true;
+  return SHELL_PATHS.has(new URL(request.url).pathname);
+}
+
+async function cachedShell(request) {
+  const cache = await caches.open(CACHE);
+  const hit = (await cache.match(request)) || (await cache.match('./index.html'));
+  return hit || Response.error();
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches
-      .open(CACHE)
-      .then((cache) =>
-        cache.addAll(['./', './index.html', './app.js', './db.js', './color.js', './style.css', './icon.svg', './logo.svg', './manifest.webmanifest'])
-      )
+    (async () => {
+      const cache = await caches.open(CACHE);
+      // One missing file must not abort the whole install: a partial offline
+      // cache is still better than a worker that never comes up.
+      await Promise.all(SHELL.map((p) => cache.add(p).catch(() => {})));
+    })()
   );
   self.skipWaiting();
 });
@@ -27,17 +45,32 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     (async () => {
-      const cached = await caches.match(request);
+      const cache = await caches.open(CACHE);
+
+      if (isShell(request)) {
+        try {
+          const fresh = await fetch(request, { cache: 'no-cache' });
+          if (fresh && fresh.status === 200 && !fresh.headers.has('set-cookie')) {
+            const copy = fresh.clone();
+            cache.put(request, copy).catch(() => {});
+          }
+          return fresh;
+        } catch {
+          return cachedShell(request); // offline: fall back to the precache
+        }
+      }
+
+      const cached = await cache.match(request);
       if (cached) return cached;
       try {
         const response = await fetch(request);
         if (response && response.status === 200) {
           const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put(request, copy));
+          cache.put(request, copy).catch(() => {});
         }
         return response;
       } catch {
-        return caches.match('./index.html');
+        return cachedShell(request);
       }
     })()
   );

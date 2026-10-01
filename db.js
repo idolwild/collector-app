@@ -11,6 +11,16 @@
     if (dbPromise) return dbPromise;
     dbPromise = new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
+      let settled = false;
+      const settle = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        fn(value);
+      };
+      // Without this, a version change blocked by another tab leaves the open
+      // request pending forever: Save sits on "Saving…" and never reports why.
+      req.onblocked = () =>
+        settle(reject, new Error('Another Collector tab is holding the database open. Close the other tabs and press Save again.'));
       req.onupgradeneeded = () => {
         if (!req.result.objectStoreNames.contains(STORE)) {
           const store = req.result.createObjectStore(STORE, {
@@ -33,8 +43,13 @@
           });
         }
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onsuccess = () => settle(resolve, req.result);
+      req.onerror = () => settle(reject, req.error);
+    });
+    // A failed open must not poison every later save: drop the promise so the
+    // next call retries instead of replaying the same rejection.
+    dbPromise.catch(() => {
+      dbPromise = null;
     });
     return dbPromise;
   }

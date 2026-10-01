@@ -93,6 +93,8 @@
     notice: '',
     selecting: false,
     selected: new Set(), // keys like 'a:123' or 's:45'
+    reordering: false, // grid is in reorder mode: cards can be dragged with a finger
+    lastView: null, // view on the previous render — leaving a view drops reorder mode
   };
 
   /* ---------------- theme (dark / light) ---------------- */
@@ -296,6 +298,7 @@
     coa: [], // certificate files: [{ blob, name }]
     coaUrls: [], // preview object URLs for image COAs, null otherwise
     palette: [],
+    sel: new Set(), // photo-pane slots selected for editing (indexes into images)
     titleTouched: false,
   };
 
@@ -305,7 +308,7 @@
 
   const root = document.getElementById('root');
 
-  const APP_VERSION = 'v46';
+  const APP_VERSION = 'v49';
 
   function imgs(a) {
     const list = Array.isArray(a.images) && a.images.length ? a.images : [a.image];
@@ -646,10 +649,39 @@
   function toggleSelect(key) {
     if (state.selected.has(key)) state.selected.delete(key);
     else state.selected.add(key);
-    const bar = root.querySelector('.sel-count');
-    if (bar) bar.textContent = `${state.selected.size} selected`;
-    const empty = state.selected.size === 0;
-    root.querySelectorAll('.sel-action').forEach((b) => (b.disabled = empty));
+    syncSelActions();
+  }
+
+  // Selection bar state: counts, which actions are available, and whether the
+  // single selected piece can be opened in the editor.
+  function syncSelActions() {
+    const n = state.selected.size;
+    const keys = [...state.selected];
+    const count = root.querySelector('.sel-count');
+    if (count) count.textContent = `${n} selected`;
+    root.querySelectorAll('.sel-action').forEach((b) => {
+      if (b.id !== 'sel-edit') b.disabled = n === 0;
+    });
+    const edit = root.querySelector('#sel-edit');
+    if (edit) {
+      edit.disabled = !(n === 1 && keys[0].startsWith('a:'));
+      edit.title = edit.disabled ? 'Select exactly one piece to edit' : 'Edit the selected piece';
+    }
+    const all = root.querySelector('#sel-all');
+    if (all) all.textContent = n && n >= selectableCount() ? 'None' : 'All';
+  }
+
+  // "Active images can be edited": with exactly one piece selected, open it
+  // straight in the editor.
+  function editSelection() {
+    const keys = [...state.selected].filter((k) => k.startsWith('a:'));
+    if (keys.length !== 1 || state.selected.size !== 1) return;
+    const id = Number(keys[0].slice(2));
+    state.selecting = false;
+    state.selected.clear();
+    // Back from the editor should land on the same grid the piece was picked from.
+    state.returnTo = { view: state.view, activeSetId: state.activeSetId };
+    openEdit(id);
   }
 
   function getSelectedArtworks() {
@@ -694,7 +726,7 @@
     if (sets.length) {
       lines.push('=== SETS ===');
       for (const s of sets) {
-        const members = state.artworks.filter((a) => a.setId === s.id);
+        const members = setMembers(s.id);
         lines.push(`\n${s.name} (${members.length} pieces)`);
         for (const a of members) lines.push(`  - ${artToText(a)}`);
       }
@@ -713,7 +745,7 @@
     if (sets.length) {
       xml += '<sets>\n';
       for (const s of sets) {
-        const members = state.artworks.filter((a) => a.setId === s.id);
+        const members = setMembers(s.id);
         xml += `<set name="${esc(s.name)}">\n`;
         for (const a of members) xml += artToXml(a) + '\n';
         xml += '</set>\n';
@@ -736,7 +768,7 @@
     if (sets.length) {
       lines.push({ text: 'SETS', bold: true });
       for (const s of sets) {
-        const members = state.artworks.filter((a) => a.setId === s.id);
+        const members = setMembers(s.id);
         lines.push({ text: `${s.name} (${members.length} pieces)`, bold: true });
         for (const a of members) lines.push({ text: '  ' + artToText(a) });
       }
@@ -763,7 +795,7 @@
     if (sets.length) {
       text += 'SETS\n';
       for (const s of sets) {
-        const members = state.artworks.filter((a) => a.setId === s.id);
+        const members = setMembers(s.id);
         text += `\n${s.name} (${members.length} pieces)\n`;
         for (const a of members) text += `  - ${artToText(a)}\n`;
       }
@@ -776,7 +808,7 @@
     // Attach the cover photo of every selected piece (and every member of selected sets).
     const seen = new Set();
     const pieces = [];
-    for (const s of sets) for (const a of state.artworks) if (a.setId === s.id && !seen.has(a.id)) { seen.add(a.id); pieces.push(a); }
+    for (const s of sets) for (const a of setMembers(s.id)) if (!seen.has(a.id)) { seen.add(a.id); pieces.push(a); }
     for (const a of arts) if (!seen.has(a.id)) { seen.add(a.id); pieces.push(a); }
     const files = pieces.map((a) => coverFile(a)).filter(Boolean);
 
@@ -1389,12 +1421,192 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
   }
 
   function selectAll() {
-    const all = state.sets.length + state.artworks.filter((a) => !a.setId).length;
+    const all = selectableCount();
     if (state.selected.size >= all) state.selected.clear();
-    else {
-      for (const s of state.sets) state.selected.add(`s:${s.id}`);
-      for (const a of state.artworks) if (!a.setId) state.selected.add(`a:${a.id}`);
+    else if (state.view === 'set') {
+      for (const a of state.artworks) if (a.setId === state.activeSetId) state.selected.add('a:' + a.id);
+    } else {
+      for (const s of state.sets) state.selected.add('s:' + s.id);
+      for (const a of state.artworks) if (!a.setId) state.selected.add('a:' + a.id);
     }
+    render();
+  }
+
+  /* ---------------- drag reorder ----------------
+     One pointer engine for every grid: photo tiles (drag by the grip) and the
+     gallery / set cards (drag with a mouse, or with a finger while the grid is
+     in reorder mode, where touch-action:none keeps the page from scrolling
+     instead). The item is lifted onto <body>, a placeholder holds its slot, and
+     the drop index is read back from where the placeholder ended up. */
+
+  function enableReorder(container, selector, onDrop, opts) {
+    if (!container || container.dataset.reorderBound) return;
+    container.dataset.reorderBound = '1';
+    const finger = (opts && opts.finger) || 'mode'; // 'mode' | 'grip' | 'always'
+    let drag = null;
+
+    const kids = () => Array.from(container.children);
+
+    const clearLift = (el) => {
+      el.classList.remove('dragging');
+      el.style.removeProperty('position');
+      el.style.removeProperty('left');
+      el.style.removeProperty('top');
+      el.style.removeProperty('width');
+      el.style.removeProperty('height');
+      el.style.removeProperty('z-index');
+      el.style.removeProperty('pointer-events');
+      el.style.removeProperty('margin');
+    };
+
+    const suppressNextClick = () => {
+      const stop = (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+      };
+      container.addEventListener('click', stop, { capture: true });
+      setTimeout(() => container.removeEventListener('click', stop, { capture: true }), 450);
+    };
+
+    container.addEventListener('pointerdown', (e) => {
+      if (drag || state.selecting || (e.button != null && e.button > 0)) return;
+      if (e.target.closest('.sel-check')) return;
+      const item = e.target.closest(selector);
+      if (!item || item.parentElement !== container) return;
+      const isFinger = e.pointerType !== 'mouse';
+      if (isFinger) {
+        if (finger === 'never') return;
+        if (finger === 'grip' && !e.target.closest('.tile-grip')) return;
+        if (finger === 'mode' && !state.reordering) return;
+      }
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      let started = false;
+
+      const begin = (ev) => {
+        if (started) return;
+        // The grid re-renders on remove/select — a slot that has since been
+        // rebuilt can't be lifted from this stale reference.
+        if (!item.isConnected || item.parentElement !== container) {
+          cleanup();
+          return;
+        }
+        started = true;
+        const rect = item.getBoundingClientRect();
+        const from = kids().indexOf(item);
+        const ph = document.createElement('div');
+        ph.className = 'drop-ph';
+        ph.style.width = rect.width + 'px';
+        ph.style.height = rect.height + 'px';
+        container.insertBefore(ph, item);
+        document.body.appendChild(item);
+        item.classList.add('dragging');
+        item.style.position = 'fixed';
+        item.style.left = rect.left + 'px';
+        item.style.top = rect.top + 'px';
+        item.style.width = rect.width + 'px';
+        item.style.height = rect.height + 'px';
+        item.style.zIndex = '70';
+        item.style.pointerEvents = 'none';
+        item.style.margin = '0';
+        drag = { item, ph, from, ox: ev.clientX - rect.left, oy: ev.clientY - rect.top };
+        document.body.classList.add('dragging-body');
+        try { container.setPointerCapture(e.pointerId); } catch {}
+      };
+
+      const onMove = (ev) => {
+        if (!drag) {
+          if (Math.abs(ev.clientX - startX) < 6 && Math.abs(ev.clientY - startY) < 6) return;
+          // 'mode' and 'grip' start on movement — the page can't scroll from
+          // that gesture anyway (touch-action:none), so nothing is stolen.
+          begin(ev);
+          return;
+        }
+        if (ev.cancelable) ev.preventDefault();
+        drag.item.style.left = ev.clientX - drag.ox + 'px';
+        drag.item.style.top = ev.clientY - drag.oy + 'px';
+        const under = document.elementFromPoint(ev.clientX, ev.clientY);
+        const card = under && under.closest(selector);
+        if (!card || card === drag.item || card.parentElement !== container) return;
+        const r = card.getBoundingClientRect();
+        const midX = r.left + r.width / 2;
+        const midY = r.top + r.height / 2;
+        const sameRow = Math.abs(ev.clientY - midY) <= r.height / 2;
+        const before = sameRow ? ev.clientX < midX : ev.clientY < midY;
+        const ref = before ? card : card.nextElementSibling;
+        if (ref !== drag.ph) container.insertBefore(drag.ph, ref || null);
+      };
+
+      const finish = () => {
+        if (!drag) {
+          cleanup();
+          return;
+        }
+        const { item: el, ph, from } = drag;
+        // A re-render mid-drag can take the placeholder away; fall back to
+        // leaving the piece where it started rather than losing it.
+        let to = from;
+        if (ph.isConnected) {
+          to = kids().indexOf(ph);
+          container.insertBefore(el, ph);
+          ph.remove();
+        } else if (el.parentElement !== container) {
+          container.appendChild(el);
+        }
+        clearLift(el);
+        document.body.classList.remove('dragging-body');
+        drag = null;
+        cleanup();
+        suppressNextClick();
+        if (to !== from && from >= 0 && to >= 0) onDrop(from, to);
+      };
+
+      function cleanup() {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', finish);
+      }
+
+      window.addEventListener('pointermove', onMove, { passive: false });
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', finish);
+    });
+  }
+
+  // Bound on every gallery / set grid (fresh nodes after each render).
+  function bindReorder() {
+    const grid = root.querySelector('main.grid');
+    if (!grid) return;
+    grid.classList.toggle('reordering', state.reordering);
+    // In reorder mode a plain tap means "I meant to drag" — don't open the piece.
+    if (state.reordering && !state.selecting && !grid.dataset.tapsBlocked) {
+      grid.dataset.tapsBlocked = '1';
+      const block = (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+      };
+      grid.addEventListener('click', block, { capture: true });
+    }
+    enableReorder(grid, '.card, .set-card', onCardDrop, { finger: 'mode' });
+  }
+
+  async function onCardDrop(from, to) {
+    const list = filteredArtworks();
+    if (from === to || from < 0 || to < 0 || to >= list.length) return;
+    const [moved] = list.splice(from, 1);
+    list.splice(to, 0, moved);
+    await persistOrder(list, scopeOrderKey());
+    refreshResultArea();
+  }
+
+  function toggleReorder() {
+    if (!state.reordering && activeFilterCount()) {
+      state.notice = 'Clear the filters first — rearranging needs the whole list in view.';
+      render();
+      return;
+    }
+    state.reordering = !state.reordering;
     render();
   }
 
@@ -1644,10 +1856,62 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     );
   }
 
+  /* ---------------- custom order ----------------
+     Three sequences, kept independently: photos inside an artwork (slot 0 is
+     the cover), pieces inside a set (slot 0 is the set's cover image), and
+     loose pieces on the gallery. Order values are written only for items the
+     user has actually moved — everything untouched keeps falling back to
+     newest-first, so an untouched library behaves exactly as before. */
+
+  function orderedFirst(list, key) {
+    return list
+      .map((a, i) => ({ a, i, o: Number.isFinite(a[key]) ? a[key] : null }))
+      .sort((x, y) => {
+        if (x.o != null && y.o != null && x.o !== y.o) return x.o - y.o;
+        if ((x.o == null) !== (y.o == null)) return x.o == null ? 1 : -1;
+        const d = (y.a.createdAt || 0) - (x.a.createdAt || 0);
+        return d || x.i - y.i;
+      })
+      .map((x) => x.a);
+  }
+
+  function setMembers(setId) {
+    return orderedFirst(state.artworks.filter((a) => a.setId === setId), 'setOrder');
+  }
+
+  // Order field for whatever grid is on screen.
+  function scopeOrderKey() {
+    return state.view === 'set' ? 'setOrder' : 'galleryOrder';
+  }
+
+  function selectableCount() {
+    return state.view === 'set'
+      ? state.artworks.filter((a) => a.setId === state.activeSetId).length
+      : state.sets.length + state.artworks.filter((a) => !a.setId).length;
+  }
+
+  // Writes only the rows whose position actually changed.
+  async function persistOrder(list, key) {
+    const writes = [];
+    list.forEach((a, i) => {
+      if (a[key] === i) return;
+      a[key] = i;
+      writes.push(CollectorDB.updateArt(a.id, { [key]: i }));
+    });
+    if (!writes.length) return;
+    try {
+      await Promise.all(writes);
+    } catch (e) {
+      console.error('order could not be saved:', e);
+      state.notice = 'The new order could not be saved — check storage in the Backup row.';
+      await reload();
+    }
+  }
+
   function filteredArtworks() {
     const f = state.filters;
     const q = f.query.trim().toLowerCase();
-    return state.artworks.filter((a) => {
+    const out = state.artworks.filter((a) => {
       if (state.view === 'set' && a.setId !== state.activeSetId) return false;
       if (state.view === 'gallery' && a.setId != null) return false;
       if (f.color && !(a.palette || []).includes(f.color)) return false;
@@ -1675,6 +1939,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
       }
       return true;
     });
+    return orderedFirst(out, scopeOrderKey());
   }
 
   function facets() {
@@ -1871,6 +2136,13 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
 
   /* ---------------- gallery ---------------- */
 
+  // Pill that switches a grid into reorder mode so pieces can be dragged with
+  // a finger (a mouse can already drag without it).
+  function reorderToggleHTML(id, count) {
+    if (count < 2) return '';
+    return `<button class="filter-toggle${state.reordering ? ' on' : ''}" id="${id}" type="button">${state.reordering ? '✓ Done' : '⇄ Reorder'}</button>`;
+  }
+
   function galleryHTML() {
     const fc = activeFilterCount();
     const list = filteredArtworks();
@@ -1910,6 +2182,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     const grid = buildResultAreaHTML(list);
 
     const filterToggle = `<button class="filter-toggle${state.filterOpen ? ' on' : ''}" id="filter-toggle">Filter${fc ? ' ✓' : ''}</button>`;
+    const reorderToggle = reorderToggleHTML('btn-reorder', list.length);
 
     return `
       <div class="app">
@@ -1933,6 +2206,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
           <div class="row">
             <input class="search" id="search" type="search" placeholder="Search title, artist, material…" value="${esc(state.filters.query)}" />
             ${filterToggle}
+            ${reorderToggle}
           </div>
           ${accordion}
         </div>
@@ -1951,18 +2225,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
           <button class="ghost small" id="btn-links" type="button">${icon('link', 15)}Links</button>
         </div>`}
 
-        ${state.selecting ? `
-        <nav class="sel-bar">
-          <button class="sel-all" id="sel-all" type="button">${state.selected.size && state.selected.size >= state.sets.length + state.artworks.filter((a) => !a.setId).length ? 'None' : 'All'}</button>
-          <span class="sel-count">${state.selected.size} selected</span>
-          <div class="sel-actions">
-            <button class="tool-btn sel-action" id="sel-link" title="Get link" aria-label="Get link" ${state.selected.size ? '' : 'disabled'}>${icon('link', 16)}</button>
-            <button class="tool-btn sel-action" id="sel-share" title="Share" aria-label="Share" ${state.selected.size ? '' : 'disabled'}>${icon('arrow', 16)}</button>
-            <button class="tool-btn sel-action" id="sel-txt" title="Download text" ${state.selected.size ? '' : 'disabled'}>.txt</button>
-            <button class="tool-btn sel-action" id="sel-xml" title="Download XML" ${state.selected.size ? '' : 'disabled'}>XML</button>
-            <button class="tool-btn sel-action" id="sel-pdf" title="Save as PDF" ${state.selected.size ? '' : 'disabled'}>PDF</button>
-          </div>
-        </nav>` : `
+        ${state.selecting ? selBarHTML() : `
         <nav class="bottomnav">
           <button class="primary wide" id="btn-add2"><span class="add-icon">+</span> New</button>
         </nav>`}
@@ -1971,7 +2234,36 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
       </div>`;
   }
 
-  function cardHTML(a) {
+  // Shared by the gallery and set views: counts update through syncSelActions.
+  function selBarHTML() {
+    const n = state.selected.size;
+    const editOn = n === 1 && [...state.selected][0].startsWith('a:');
+    return `
+        <nav class="sel-bar">
+          <button class="sel-all" id="sel-all" type="button">${n && n >= selectableCount() ? 'None' : 'All'}</button>
+          <span class="sel-count">${n} selected</span>
+          <div class="sel-actions">
+            <button class="sel-action sel-edit" id="sel-edit" type="button" ${editOn ? '' : 'disabled'} title="Edit the selected piece">Edit</button>
+            <button class="tool-btn sel-action" id="sel-link" title="Get link" aria-label="Get link" ${n ? '' : 'disabled'}>${icon('link', 16)}</button>
+            <button class="tool-btn sel-action" id="sel-share" title="Share" aria-label="Share" ${n ? '' : 'disabled'}>${icon('arrow', 16)}</button>
+            <button class="tool-btn sel-action" id="sel-txt" title="Download text" aria-label="Download text" ${n ? '' : 'disabled'}>.txt</button>
+            <button class="tool-btn sel-action" id="sel-xml" title="Download XML" aria-label="Download XML" ${n ? '' : 'disabled'}>XML</button>
+            <button class="tool-btn sel-action" id="sel-pdf" title="Save as PDF" aria-label="Save as PDF" ${n ? '' : 'disabled'}>PDF</button>
+          </div>
+        </nav>`;
+  }
+
+  function bindSelBar() {
+    root.querySelector('#sel-all')?.addEventListener('click', selectAll);
+    root.querySelector('#sel-edit')?.addEventListener('click', editSelection);
+    root.querySelector('#sel-link')?.addEventListener('click', publishSelected);
+    root.querySelector('#sel-share')?.addEventListener('click', shareSelected);
+    root.querySelector('#sel-txt')?.addEventListener('click', exportSelectedText);
+    root.querySelector('#sel-xml')?.addEventListener('click', exportSelectedXml);
+    root.querySelector('#sel-pdf')?.addEventListener('click', exportSelectedPdf);
+  }
+
+  function cardHTML(a, pos) {
     const t = cardTitle(a);
     const first = imgs(a)[0];
     const coverUrl = thumbForId(a.id, 0);
@@ -1987,9 +2279,15 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
       ? `<span class="badge badge-${esc(a.visibility)}">${VISIBILITY_LABELS[a.visibility]}</span>`
       : '';
     const photoCount = imgs(a).length;
+    // Inside a set every piece carries its position, so an arrangement reads at
+    // a glance; it sits top-right, pushing the photo-count chip down a row.
+    const posChip =
+      state.view === 'set' && Number.isFinite(pos)
+        ? `<span class="pos-chip">${pos + 1}</span>`
+        : '';
     const countChip =
       photoCount > 1
-        ? `<span class="count-chip">${photoCount}</span>`
+        ? `<span class="count-chip${posChip ? ' pushed' : ''}">${photoCount}</span>`
         : '';
     const swatches = a.palette?.length
       ? `<div class="swatches">${a.palette
@@ -2001,7 +2299,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
       ? `<span class="sel-check${state.selected.has('a:' + a.id) ? ' on' : ''}" data-key="a:${a.id}">✓</span>`
       : '';
     return `<button class="card${state.selecting ? ' selecting' : ''}" data-id="${a.id}">
-      <div class="thumb">${selCheck}${thumb}${badges}${countChip}${playBadge}${swatches}</div>
+      <div class="thumb">${selCheck}${thumb}${badges}${posChip}${countChip}${playBadge}${swatches}</div>
       <div class="card-body">
         <div class="card-title">${esc(t.title || 'Untitled')}</div>
         <div class="card-sub">${esc(t.sub)}</div>
@@ -2057,7 +2355,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
 
   function setCardHTML(s) {
     const name = typeof s.name === 'string' ? s.name : '';
-    const members = state.artworks.filter((a) => a.setId === s.id);
+    const members = setMembers(s.id); // custom order decides the set's cover image
     const m0 = members[0];
     const m0First = m0 ? imgs(m0)[0] : null;
     const cover = m0 ? thumbForId(m0.id, 0) : null;
@@ -2079,7 +2377,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
   }
 
   function setGridHTML(list) {
-    return `<main class="grid">${list.map(cardHTML).join('')}</main>`;
+    return `<main class="grid">${list.map((a, i) => cardHTML(a, i)).join('')}</main>`;
   }
 
   function homeSectionsHTML(list) {
@@ -2166,6 +2464,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     root.querySelector('#empty-add')?.addEventListener('click', openNew);
     root.querySelector('#empty-set-add')?.addEventListener('click', () => openNewInSet(activeSet().id));
     root.querySelector('#empty-clear')?.addEventListener('click', clearFilters);
+    bindReorder();
   }
 
   function refreshResultArea() {
@@ -2319,6 +2618,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
           </div>
           <div class="top-actions">
             ${avatarButtonHTML('set-profile')}
+            <button class="tool-btn" id="set-select" title="Select items">${state.selecting ? '✕' : '☑'}</button>
             <button class="add-btn" id="set-add" title="Add to this set"><span class="add-icon">+</span><span class="add-label">Add</span></button>
             <button class="tool-btn" id="set-menu" title="Set options" aria-label="Set options" aria-haspopup="menu">···</button>
           </div>
@@ -2331,16 +2631,20 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
         <div class="filterbar">
           <div class="row">
             <input class="search" id="search" type="search" placeholder="Search within this set…" value="${esc(state.filters.query)}" />
+            ${reorderToggleHTML('set-reorder', list.length)}
           </div>
         </div>
 
         ${setsBar}
 
+        ${state.notice ? `<div class="notice" id="notice"><span>${esc(state.notice)}</span><button class="ghost small" id="notice-dismiss">OK</button></div>` : ''}
+
         ${buildResultAreaHTML(list)}
 
+        ${state.selecting ? selBarHTML() : `
         <nav class="bottomnav">
           <button class="primary wide" id="set-add2"><span class="add-icon">+</span> Add piece</button>
-        </nav>
+        </nav>`}
       </div>`;
   }
 
@@ -2370,6 +2674,13 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     el.querySelector('#set-back')?.addEventListener('click', goHome);
     el.querySelector('#set-add')?.addEventListener('click', () => openNewInSet(activeSet().id));
     el.querySelector('#set-add2')?.addEventListener('click', () => openNewInSet(activeSet().id));
+    el.querySelector('#set-select')?.addEventListener('click', toggleSelecting);
+    el.querySelector('#set-reorder')?.addEventListener('click', toggleReorder);
+    el.querySelector('#notice-dismiss')?.addEventListener('click', () => {
+      state.notice = '';
+      render();
+    });
+    bindSelBar();
     el.querySelector('#set-rename')?.addEventListener('click', async () => {
       closeMenu();
       const set = activeSet();
@@ -2480,13 +2791,9 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     el.querySelector('#btn-profile')?.addEventListener('click', showProfileDialog);
     el.querySelector('#btn-theme')?.addEventListener('click', toggleTheme);
     el.querySelector('#btn-select')?.addEventListener('click', toggleSelecting);
-    el.querySelector('#sel-all')?.addEventListener('click', selectAll);
-    el.querySelector('#sel-link')?.addEventListener('click', publishSelected);
+    el.querySelector('#btn-reorder')?.addEventListener('click', toggleReorder);
     el.querySelector('#btn-links')?.addEventListener('click', showLinksDialog);
-    el.querySelector('#sel-share')?.addEventListener('click', shareSelected);
-    el.querySelector('#sel-txt')?.addEventListener('click', exportSelectedText);
-    el.querySelector('#sel-xml')?.addEventListener('click', exportSelectedXml);
-    el.querySelector('#sel-pdf')?.addEventListener('click', exportSelectedPdf);
+    bindSelBar();
     el.querySelector('#btn-export')?.addEventListener('click', exportBackup);
     el.querySelector('#btn-import')?.addEventListener('click', () =>
       el.querySelector('#import-file').click()
@@ -2497,10 +2804,17 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     storageSummary().then((s) => {
       const box = el.querySelector('#backup-space');
       if (!box) return;
-      box.textContent = s ? `${fmtBytes(s.usage)} / ${fmtBytes(s.quota)}` : '';
-      // Amber when there is less than a quarter left — the point where saves
-      // and imports start failing without warning.
-      box.classList.toggle('tight', !!s && s.free < s.quota * 0.25);
+      const secure = !!window.isSecureContext;
+      const where = `${location.protocol}//${location.host} · ${secure ? 'secure' : 'insecure origin, storage unavailable'}`;
+      const blocked = !!s && s.blocked;
+      box.textContent = !s ? (secure ? '' : 'No storage') : blocked ? 'No storage' : `${fmtBytes(s.usage)} / ${fmtBytes(s.quota)}`;
+      box.classList.toggle('blocked', blocked || !s);
+      box.classList.toggle('tight', !!s && !blocked && s.free < s.quota * 0.25);
+      box.title = !s
+        ? `Running on ${where}. This browser cannot report storage usage.`
+        : blocked
+          ? `Running on ${where}. 0 B available — writes to this site are blocked (private window, website data turned off, or an http address).`
+          : `Running on ${where}. Space this collection occupies, and what this site is allowed to use.`;
     });
   }
 
@@ -2537,6 +2851,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     for (const u of form.murls) if (u) URL.revokeObjectURL(u);
     for (const u of form.coaUrls) if (u) URL.revokeObjectURL(u);
     Object.assign(form, { images: [], vurls: [], murls: [], posters: [], durations: [], coa: [], coaUrls: [], palette: [], titleTouched: false });
+    form.sel = new Set();
     detail.index = 0;
   }
 
@@ -2549,6 +2864,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){lb.classLis
     form.murls.splice(i, 1);
     form.posters.splice(i, 1);
     form.durations.splice(i, 1);
+    form.sel = new Set(); // surviving slots shifted — stale indexes select nothing
   }
 
   function openNew() {
@@ -2660,6 +2976,7 @@ const paletteRow = form.palette.length
 
         <div class="sheet-body">
           <div class="photo-pane" id="photo-pane">
+            <div class="tile-actions" id="tile-actions" hidden></div>
             <div class="photo-grid" id="photo-grid"></div>
             ${paletteRow}
             <div class="photo-actions">
@@ -3266,10 +3583,11 @@ const paletteRow = form.palette.length
               ? `<img class="tile-img" src="${esc(u)}" alt="Photo ${i + 1}" loading="lazy" />`
               : '<div class="no-img tile-empty"></div>';
           return `
-        <div class="photo-tile${i === 0 ? ' cover' : ''}${video ? ' is-video' : ''}" data-i="${i}">
+        <div class="photo-tile${i === 0 ? ' cover' : ''}${video ? ' is-video' : ''}${form.sel.has(i) ? ' on' : ''}" data-i="${i}">
           ${media}
+          <button type="button" class="tile-grip" data-grip="${i}" aria-label="Drag photo ${i + 1} to reorder" title="Drag to reorder">⠿</button>
           <button type="button" class="tile-remove" data-i="${i}" aria-label="Remove ${video ? 'video' : 'photo'}">×</button>
-          ${i === 0 ? '<span class="tile-cover">Cover</span>' : ''}
+          ${i === 0 ? '<span class="tile-cover">Cover</span>' : `<span class="tile-pos">${i + 1}</span>`}
         </div>`;
         })
         .join('');
@@ -3303,6 +3621,88 @@ const paletteRow = form.palette.length
         renderPaletteArea();
       });
     }
+
+    // Tap a photo to select it — selected photos are the ones you can move,
+    // promote to cover, or remove from the bar above the grid.
+    for (const tile of grid.querySelectorAll('.photo-tile')) {
+      tile.addEventListener('click', (e) => {
+        // Videos keep their own tap (play/pause) — they reorder by the grip.
+        if (e.target.closest('.tile-remove, .tile-grip, .tile-vid')) return;
+        const i = Number(tile.dataset.i);
+        if (form.sel.has(i)) form.sel.delete(i);
+        else form.sel.add(i);
+        renderPhotoPane();
+      });
+    }
+
+    enableReorder(grid, '.photo-tile', (from, to) => {
+      void moveFormMedia(from, to, false);
+    }, { finger: 'grip' });
+
+    renderTileActions(shell);
+  }
+
+  // Slots move together: images, previews, playable URLs, posters and durations
+  // are spliced as one so nothing gets attached to the wrong photo.
+  async function moveFormMedia(from, to, keepSelected) {
+    if (from === to || from < 0 || to < 0 || from >= form.images.length || to >= form.images.length) return;
+    for (const key of ['images', 'vurls', 'murls', 'posters', 'durations']) {
+      const [moved] = form[key].splice(from, 1);
+      form[key].splice(to, 0, moved);
+    }
+    form.sel = keepSelected && Number.isFinite(to) ? new Set([to]) : new Set();
+    renderPhotoPane();
+    if (form.images.length) {
+      const src = paletteSource(form);
+      form.palette = src ? await ColorUtil.extractPalette(src, 4) : [];
+    } else {
+      form.palette = [];
+    }
+    syncFormPalette();
+    renderPaletteArea();
+  }
+
+  function renderTileActions(shell) {
+    const box = shell.querySelector('#tile-actions');
+    if (!box) return;
+    const n = form.sel.size;
+    if (!n) {
+      box.hidden = true;
+      box.innerHTML = '';
+      return;
+    }
+    const ids = [...form.sel].sort((a, b) => a - b);
+    const one = n === 1 ? ids[0] : -1;
+    const last = form.images.length - 1;
+    box.hidden = false;
+    box.innerHTML = `
+      <span class="tile-sel-count">${n} selected</span>
+      <button type="button" class="ghost small" id="tile-left"${one <= 0 ? ' disabled' : ''}>← Move</button>
+      <button type="button" class="ghost small" id="tile-right"${one < 0 || one >= last ? ' disabled' : ''}>Move →</button>
+      <button type="button" class="ghost small" id="tile-cover"${one < 0 || one === 0 ? ' disabled' : ''}>Make cover</button>
+      <button type="button" class="ghost small" id="tile-remove-sel">Remove</button>
+      <button type="button" class="ghost small" id="tile-clear">Done</button>`;
+    box.querySelector('#tile-left')?.addEventListener('click', () => void moveFormMedia(one, one - 1, true));
+    box.querySelector('#tile-right')?.addEventListener('click', () => void moveFormMedia(one, one + 1, true));
+    box.querySelector('#tile-cover')?.addEventListener('click', () => void moveFormMedia(one, 0, true));
+    box.querySelector('#tile-remove-sel')?.addEventListener('click', async () => {
+      for (const i of [...form.sel].sort((a, b) => b - a)) formSpliceMedia(i);
+      form.sel.clear();
+      if (form.images.length) {
+        const src = paletteSource(form);
+        form.palette = src ? await ColorUtil.extractPalette(src, 4) : [];
+      } else {
+        form.palette = [];
+        form.titleTouched = false;
+      }
+      renderPhotoPane();
+      syncFormPalette();
+      renderPaletteArea();
+    });
+    box.querySelector('#tile-clear')?.addEventListener('click', () => {
+      form.sel.clear();
+      renderPhotoPane();
+    });
   }
 
   function syncFormPalette() {
@@ -3556,11 +3956,18 @@ const paletteRow = form.palette.length
       // the old copy said "storage may be full" for every possible failure.
       disable(false);
       const store = await storageSummary();
+      const insecure = insecureHint();
+      const pad = insecure ? ` ${insecure}` : '';
       errBox.hidden = false;
-      errBox.textContent = isQuotaError(e)
-        ? `Storage is full — nothing was saved. Export a backup, free some space, then try again.${storageLine(store)}`
-        : `Could not save: ${describeErr(e)}.${storageLine(store)}`;
-      console.error('save failed:', e);
+      if (isQuotaError(e)) {
+        errBox.textContent =
+          store && store.blocked
+            ? `No storage available — this browser reports 0 B for this site and refuses writes, so nothing can be saved. Private/incognito windows block writes; reopen Collector in a normal window and import your backup there.${pad}`
+            : `Storage is full — nothing was saved. Export a backup, free some space, then try again.${storageLine(store)}${pad}`;
+      } else {
+        errBox.textContent = `Could not save: ${describeErr(e)}.${storageLine(store)}${pad}`;
+      }
+      console.error('save failed:', e, store);
       return;
     }
     // The record is committed; a failure from here on is only a redraw problem.
@@ -3973,26 +4380,26 @@ const paletteRow = form.palette.length
   }
 
   // Real numbers behind any "storage is full" claim: what this origin uses and
-  // how much it is allowed. Null when the browser can't measure (or the number
-  // would be meaningless), so callers fall back to plain prose.
+  // how much it is allowed.
+  //
+  //   blocked:true → quota is 0, so the browser is flatly refusing writes for
+  //                  this site (private/incognito window, website data turned
+  //                  off, or a device with no space left). Worth distinguishing
+  //                  from "nearly full": it never fills up, it is already empty.
+  //   null         → the browser cannot measure storage at all.
   async function storageSummary() {
     try {
       const est =
         navigator.storage && typeof navigator.storage.estimate === 'function'
           ? await navigator.storage.estimate()
           : null;
-      if (
-        est &&
-        Number.isFinite(est.usage) &&
-        Number.isFinite(est.quota) &&
-        est.quota > 0
-      ) {
-        return { usage: est.usage, quota: est.quota, free: Math.max(0, est.quota - est.usage) };
-      }
+      if (!est || !Number.isFinite(est.usage)) return null;
+      const quota = Number.isFinite(est.quota) ? est.quota : 0;
+      if (quota <= 0) return { usage: est.usage, quota: 0, free: 0, blocked: true };
+      return { usage: est.usage, quota, free: Math.max(0, quota - est.usage), blocked: false };
     } catch {
-      /* estimate() is best-effort */
+      return null;
     }
-    return null;
   }
 
   function isQuotaError(e) {
@@ -4007,7 +4414,37 @@ const paletteRow = form.palette.length
   }
 
   function storageLine(store) {
-    return store ? ` Storage: ${fmtBytes(store.usage)} of ${fmtBytes(store.quota)} used.` : '';
+    if (!store) return '';
+    if (store.blocked) return ' Storage: none available (0 B) — this browser is refusing writes to this site.';
+    return ` Storage: ${fmtBytes(store.usage)} of ${fmtBytes(store.quota)} used.`;
+  }
+
+  // Where the page is actually running. This is the first thing to check when
+  // the same build behaves differently on GitHub Pages and on a laptop: they
+  // are different origins, with different databases and different rules.
+  const SECURE_PORT = '8443';
+
+  function secureOriginURL() {
+    return `https://${location.hostname || 'localhost'}:${SECURE_PORT}/`;
+  }
+
+  function insecureHint() {
+    if (window.isSecureContext) return '';
+    return `This page is running over ${location.protocol}//${location.host} — browsers give plain http pages no storage, so the save was refused. Use the secure address instead (${secureOriginURL()}).`;
+  }
+
+  // Shown above every view (form included) while the origin is insecure, so the
+  // failure explains itself instead of looking like a broken Save button.
+  function insecureBannerHTML() {
+    if (window.isSecureContext) return '';
+    const why = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
+      ? 'localhost is normally allowed over http, but this page is not on localhost.'
+      : 'Browsers give plain http pages no storage and no service worker, so photos cannot be saved here.';
+    return `<div class="origin-warn" role="alert">
+      <div><strong>Insecure address</strong> — ${esc(location.protocol)}//${esc(location.host)} cannot store your photos.</div>
+      <div class="origin-warn-why">${esc(why)}</div>
+      <a class="origin-warn-link" href="${esc(secureOriginURL())}">Open the secure version →</a>
+    </div>`;
   }
 
   /* ---------------- export / import ---------------- */
@@ -4212,17 +4649,22 @@ const paletteRow = form.palette.length
 
   function render() {
     const el = root;
+    const warn = insecureBannerHTML();
+    if (state.lastView !== state.view) {
+      state.reordering = false;
+      state.lastView = state.view;
+    }
     if (state.view === 'form') {
-      el.innerHTML = formHTML();
+      el.innerHTML = warn + formHTML();
       attachForm();
     } else if (state.view === 'detail') {
-      el.innerHTML = detailHTML();
+      el.innerHTML = warn + detailHTML();
       attachDetail();
     } else if (state.view === 'set') {
-      el.innerHTML = setViewHTML();
+      el.innerHTML = warn + setViewHTML();
       attachSet();
     } else {
-      el.innerHTML = galleryHTML();
+      el.innerHTML = warn + galleryHTML();
       attachGallery();
     }
     window.scrollTo(0, 0);
@@ -4239,15 +4681,15 @@ const paletteRow = form.palette.length
     try {
       rows = await CollectorDB.getAll();
     } catch (err) {
-      root.innerHTML = `<div class="app empty"><div class="empty-icon">⚠️</div><p>This browser can't use its local database here. Serve the folder over HTTP and reload, e.g. open a terminal in this folder and run:<br><code>ruby -run -e httpd . -p 8000</code><br><code>python3 -m http.server 8000</code></p></div>`;
+      const hint = !window.isSecureContext
+        ? `This page is on ${location.origin}, where this browser refuses to open its database. Open ${secureOriginURL()} instead (run start.command first), or serve the folder from a server whose address starts with https.`
+        : "This browser can't use its local database here. Serve the folder over HTTP and reload, e.g. open a terminal in this folder and run:<br><code>ruby -run -e httpd . -p 8000</code><br><code>python3 -m http.server 8000</code>";
+      root.innerHTML = `<div class="app empty"><div class="empty-icon">⚠️</div><p>${hint}</p></div>`;
       return;
     }
     const purged = await purgeShells(rows);
     await repairPalettes(rows);
     rows = await CollectorDB.getAll();
-    if (purged) {
-      state.notice = `Removed ${purged} damaged record${purged === 1 ? '' : 's'} — photos erased by an earlier bug can't be restored. Anything you add from now on is saved safely.`;
-    }
     state.artworks = rows;
     state.urls = refreshUrls(rows);
     let sets = [];
@@ -4257,6 +4699,16 @@ const paletteRow = form.palette.length
       sets = [];
     }
     state.sets = (sets || []).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    // Say this up front: a blocked quota looks like random save failures until
+    // someone checks the numbers, and it never resolves on its own.
+    const store = await storageSummary();
+    if (!window.isSecureContext) {
+      state.notice = `Running on ${location.origin} — an http address with no storage, so Save and Import are rejected. Open ${secureOriginURL()} instead and photos will save normally.`;
+    } else if (store && store.blocked) {
+      state.notice = 'Storage unavailable — this browser reports 0 B for Collector, so saves are rejected. Private/incognito windows block writes; reopen in a normal window. Your backup file is safe either way.';
+    } else if (purged) {
+      state.notice = `Removed ${purged} damaged record${purged === 1 ? '' : 's'} — photos erased by an earlier bug can't be restored. Anything you add from now on is saved safely.`;
+    }
     render();
     // Thumbnailing is the slow part of an upgrade, so it runs after the first
     // paint — an older collection shouldn't sit on a blank screen while it works.
